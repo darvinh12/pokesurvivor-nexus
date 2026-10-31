@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<style>
+  body{width:300px;margin:0;padding:14px 16px;background:#152a5c;color:#fff;font:13px/1.4 system-ui,sans-serif}
+  h1{margin:0 0 8px;font-size:16px;color:#ffd23f}
+  dl{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin:0 0 10px}
+  dt{opacity:.7}dd{margin:0}
+  .warn{background:#5a3a0e;border:1px solid #d98a1f;border-radius:6px;padding:8px;margin:0 0 10px}
+  .err{color:#ff9aa5}
+  button{font:inherit;background:#0b1838;color:#fff;border:1px solid #5b83d6;border-radius:6px;padding:5px 10px;cursor:pointer;margin-right:6px}
+  button:disabled{opacity:.5;cursor:default}
+  .hidden{display:none}
+  p.small{font-size:11px;opacity:.7;margin:10px 0 0}
+</style>
+</head>
+<body>
+  <h1>PokeSurvivor Nexus</h1>
+  <div id="warn" class="warn hidden">
+    Los scripts de usuario están apagados, así que corre la versión empaquetada y no se actualiza sola.
+    Activa <b>Permitir scripts de usuario</b> en los detalles de la extensión y recarga el juego.
+    <div style="margin-top:6px"><button id="details">Abrir detalles</button></div>
+  </div>
+  <dl>
+    <dt>Versión activa</dt><dd id="ver">…</dd>
+    <dt>Origen</dt><dd id="src">…</dd>
+    <dt>Última en GitHub</dt><dd id="latest">…</dd>
+    <dt>Revisado</dt><dd id="checked">…</dd>
+  </dl>
+  <p id="error" class="err hidden"></p>
+  <button id="check">Buscar actualización</button>
+  <p class="small">Los cambios se aplican al recargar la página del juego. En el juego, Alt+N abre los ajustes.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

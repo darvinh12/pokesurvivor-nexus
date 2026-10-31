@@ -22,7 +22,7 @@ Cada módulo declara qué piezas del juego necesita y una función de arranque. 
 |---|---|---|
 | Campo de visión | Escala `Camera.VIEW_W` y `Camera.MIN_VIEW_H` entre 1.0x y 1.7x, con Alt + / Alt − / Alt 0 | `Camera.resize` |
 | Minimapa | Lienzo flotante que se arrastra y se redimensiona, con terreno, enemigos, jefes, shinies, cofres, altares, objetos, grieta, eventos y aliados. Capas activables y tecla M | `World`, `EnemyMgr`, `Pickups`, `Rift`, `Events`, `Coop`, `Camera` |
-| Nitidez y rendimiento | El juego limita el canvas a `Math.min(1.5, devicePixelRatio)`. El módulo envuelve `Camera.resize` y sube la resolución hasta la nativa (máximo 3x), o la baja a 1x en modo rendimiento. Opción de límite de FPS de 30 o 60 sobre `requestAnimationFrame` | `Camera.resize`, `#game` |
+| Nitidez y rendimiento | El juego limita el canvas a `Math.min(1.5, devicePixelRatio)` y guarda esa escala en una variable privada que usa el HUD, así que subirla rompería el dibujo. El módulo ofrece modo rendimiento a 1x (sobrescribe `window.devicePixelRatio`), escalado nítido con `image-rendering: pixelated` y límite de FPS de 30 o 60 sobre `requestAnimationFrame` | `window.devicePixelRatio`, `#game` |
 | Atajos extra | El juego ya trae 1/2/3 y R al subir de nivel y 1/2 en objetos. Se agregan 1 a 9 en la pantalla de vínculo, Retroceso para "Atrás" y Enter en el fin de partida | `#scr-bond`, `#scr-over` |
 | Indicadores de combate | Círculo del radio del imán (`player.magnet`, 78 por defecto) dibujado bajo el HUD, viñeta roja con vida por debajo del umbral elegido y una píldora con la cuenta regresiva al próximo jefe o al Juicio | `HUD.draw`, `Enemies.BOSSES`, `Judgment.AT`, `Game.st.time` |
 

@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "PokeSurvivor Nexus",
+  "version": "1.0.0",
+  "description": "Mejoras gráficas y de calidad de vida para PokéSurvivor: campo de visión, minimapa, indicadores y más.",
+  "minimum_chrome_version": "120",
+  "permissions": ["userScripts", "scripting", "storage", "alarms"],
+  "host_permissions": [
+    "https://pokesurvivor.com/*",
+    "https://www.pokesurvivor.com/*",
+    "https://raw.githubusercontent.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "PokeSurvivor Nexus", "default_popup": "popup.html" }
+}
