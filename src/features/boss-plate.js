@@ -233,8 +233,11 @@
     // Debajo del reloj, del aviso de próximo jefe y del texto de la arena.
     let top = 64 * k;
     if (clockShown) top = Math.max(top, clock.getBoundingClientRect().bottom + 6);
-    const pill = document.getElementById('nexus-boss');
-    if (pill && !pill.classList.contains('hidden')) top = Math.max(top, pill.getBoundingClientRect().bottom + 6);
+    // Debajo también de la píldora del modo (Modos Nexus, mazmorra).
+    for (const id of ['nexus-boss', 'nexus-mode-pill']) {
+      const pill = document.getElementById(id);
+      if (pill && !pill.classList.contains('hidden') && pill.offsetParent !== null) top = Math.max(top, pill.getBoundingClientRect().bottom + 6);
+    }
     if (ns.Rift && ns.Rift.inArena) top += 22 * k;
     style(plate, 'top', Math.round(top) + 'px');
     style(plate, 'transform', `translateX(-50%) scale(${k})`);

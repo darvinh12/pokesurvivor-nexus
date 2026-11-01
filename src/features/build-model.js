@@ -366,7 +366,11 @@
     return { ids: [...ids], start, tm };
   }
 
-  function bestFor(dex, withTM) {
+  // style: undefined (la mejor sin restricción), 'ranged' (sin movimientos
+  // cuerpo a cuerpo) o 'melee' (al menos dos cuerpo a cuerpo, o uno si el
+  // Pokémon solo puede aprender uno). Así se arman las dos builds que muestra
+  // SurvivorTiers: a distancia y cuerpo a cuerpo.
+  function bestFor(dex, withTM, style) {
     const N = ns(), mon = N.DEX_BY[dex];
     if (!mon) return null;
     const mt = moveTable().by;
@@ -376,8 +380,12 @@
     for (const id of ids) {
       const row = mt[id];
       if (!row) continue;
-      if (row.buff) buffAll.push(row); else if (row.st[1].dmg > 0) atkAll.push(attackVals(ctx, row));
+      if (row.buff) buffAll.push(row);
+      else if (row.st[1].dmg > 0 && !(style === 'ranged' && row.melee)) atkAll.push(attackVals(ctx, row));
     }
+    const meleeAll = atkAll.filter((a) => a.row.melee);
+    const needMelee = style === 'melee' ? Math.min(2, meleeAll.length) : 0;
+    if (style === 'melee' && !needMelee) return null;
     // Danza Dragón y Danza Espada comparten buff: basta con la más fuerte.
     const bestP = buffAll.filter((b) => b.st[1].buff.stat === 'patk').sort((a, b) => b.st[1].buff.total - a.st[1].buff.total)[0];
     const buffs = buffAll.filter((b) => b.st[1].buff.stat !== 'patk' || b === bestP);
@@ -389,7 +397,9 @@
     }, 0);
     for (const a of atkAll) a.px = proxy(a);
     atkAll.sort((a, b) => b.px - a.px);
-    const atks = atkAll.slice(0, TOPK);
+    let atks = atkAll.slice(0, TOPK);
+    // En la build cuerpo a cuerpo, los mejores ataques de contacto entran a la preselección aunque no estén en el top.
+    if (needMelee) for (const a of meleeAll.slice(0, 4)) if (!atks.includes(a)) atks = [...atks.slice(0, TOPK - 1), a];
     const buffSets = [[]];
     for (let i = 0; i < buffs.length; i++) { buffSets.push([buffs[i]]); for (let j = i + 1; j < buffs.length; j++) buffSets.push([buffs[i], buffs[j]]); }
     let best = null;
@@ -398,6 +408,7 @@
       if (k < 1) continue;
       for (const ix of idxCombos(atks.length, k)) {
         const sel = ix.map((i) => atks[i]);
+        if (needMelee && sel.filter((a) => a.row.melee).length < needMelee) continue;
         const r = evalCombo(ctx, sel, bs);
         if (!best || r.score > best.r.score) best = { r, atks: sel, buffs: bs };
       }
@@ -487,7 +498,7 @@
   const dec = (v, d = 2) => (+v).toFixed(d).replace('.', ',');
   function explain(dex, opts = {}) {
     const G = NX.gd;
-    const b = bestFor(dex, !!opts.tm);
+    const b = bestFor(dex, !!opts.tm, opts.style);
     if (!b) return null;
     const { r, atks, buffs } = b.best;
     const L = r.st[1], E0 = r.st[0];
@@ -538,8 +549,77 @@
     };
   }
 
+  // Las dos builds de un Pokémon (a distancia y cuerpo a cuerpo), en memoria.
+  const styleCache = new Map();
+  function styles(dex) {
+    dex = +dex;
+    if (!styleCache.has(dex)) {
+      const ranged = explain(dex, { style: 'ranged' }), melee = explain(dex, { style: 'melee' });
+      const best = ranged && melee ? (melee.raw > ranged.raw ? 'melee' : 'ranged') : ranged ? 'ranged' : melee ? 'melee' : null;
+      styleCache.set(dex, { ranged, melee, best });
+    }
+    return styleCache.get(dex);
+  }
+
+  // Valor de un conjunto de movimientos ya elegidos (para medir cuánto suma una carta nueva).
+  function setScore(dex, ids) {
+    const N = ns(), mon = N.DEX_BY[dex], mt = moveTable().by;
+    if (!mon) return 0;
+    const ctx = monCtx(mon), atks = [], buffs = [];
+    for (const id of ids) {
+      const row = mt[id];
+      if (!row) continue;
+      if (row.buff) buffs.push(row); else if (row.st[1].dmg > 0) atks.push(attackVals(ctx, row));
+    }
+    return atks.length ? evalCombo(ctx, atks, buffs).score : 0;
+  }
+
+  // Elige el estilo que conviene seguir con lo que ya llevas: el que tiene más
+  // movimientos en común; si empatan, el de mejor puntuación.
+  function pickStyle(dex, ownIds) {
+    const s = styles(dex), own = new Set(ownIds);
+    const hits = (b) => (b ? b.moves.filter((m) => own.has(m.id)).length : -1);
+    const hr = hits(s.ranged), hm = hits(s.melee);
+    if (hr === hm) return s.best;
+    return hr > hm ? 'ranged' : 'melee';
+  }
+
+  // Consejo para las cartas de subida de nivel. own = [{ id, lvl, evolved }],
+  // offers = [{ id, type: 'new'|'up'|'evo'|'stat'|... }]. Devuelve, para cada
+  // oferta, una puntuación y un motivo corto; la de mayor puntuación es la mejor opción.
+  function advise(dex, own, offers, style) {
+    const s = styles(dex);
+    const ownIds = own.map((m) => m.id);
+    style = style || pickStyle(dex, ownIds);
+    const target = s[style] || s.ranged || s.melee;
+    const tIds = new Set(target ? target.moves.map((m) => m.id) : []);
+    const shareOf = (id) => { const m = target && target.moves.find((x) => x.id === id); return m ? m.share || 0.15 : 0; };
+    const needs = new Set(target ? target.moves.filter((m) => m.evoNeed && ownIds.includes(m.id)).map((m) => m.evoNeed) : []);
+    const base = setScore(dex, ownIds);
+    const out = offers.map((o) => {
+      let score = 0, why = '';
+      if (o.type === 'new') {
+        if (ownIds.length >= 4) { score = 0; why = 'ya no te quedan huecos'; }
+        else if (tIds.has(o.id)) { score = 100 + shareOf(o.id) * 100; why = 'es de tu build'; }
+        else { const d = setScore(dex, [...ownIds, o.id]) - base; score = Math.max(0, d) * 40; why = d > 0.05 ? 'suma daño a lo que llevas' : 'aporta poco a lo que llevas'; }
+      } else if (o.type === 'up' || o.type === 'evo') {
+        const inB = tIds.has(o.id);
+        score = (inB ? 60 + shareOf(o.id) * 80 : 20) + (o.type === 'evo' ? 30 : 0);
+        why = o.type === 'evo' ? (inB ? 'evoluciona un movimiento de tu build' : 'evoluciona un movimiento') : (inB ? 'sube un movimiento de tu build' : 'sube un movimiento fuera de la build');
+      } else if (o.type === 'stat') {
+        if (needs.has(o.id)) { score = 75; why = 'es la mejora que pide una evolución de tu build'; } else { score = 12; why = 'mejora general'; }
+      } else score = 5;
+      return { id: o.id, type: o.type, score, why };
+    });
+    const best = out.reduce((a, b) => (b.score > (a ? a.score : -1) ? b : a), null);
+    return { style, target, offers: out, best: best && best.score > 0 ? best : null, styleName: style === 'melee' ? 'cuerpo a cuerpo' : 'a distancia' };
+  }
+
   NX.buildModel = {
     version: MODEL_V,
+    styles,
+    pickStyle,
+    advise,
     METHOD: 'Build Nexus: estimación con los datos del juego, no una simulación. Cada movimiento se valora al inicio (nivel 2) y al final (nivel máximo y evolucionado) con el ataque físico o especial del Pokémon, tipo propio ×1,2 si es de un solo tipo, y la eficacia y defensas de los enemigos y jefes de ese momento. Puntúa daño en grupo (50 %), daño a jefes (20 %) y aguante (30 %): vida, defensas, reducción, control, invulnerabilidad de las embestidas, velocidad, regeneración y lo rápido que matas. Prueba todas las combinaciones con hasta 2 potenciadores. No cuenta objetos, habilidades ni naturalezas.',
     status: () => state,
     error: () => lastErr,

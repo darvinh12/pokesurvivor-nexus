@@ -51,6 +51,12 @@ Los ajustes se abren con **Alt + N** o con el botón "Nexus" del menú principal
 | Modos | Modos Nexus: infinito, modificadores, laboratorio de builds, desafío diario y Boss Rush | botón en el menú |
 | Datos | Centro de builds: build calculada con los datos del juego, la de SurvivorTiers y la suya | botón en el menú |
 | Estilo | Identidad Nexus Edition, filtros de pantalla y música propia (la del juego viene apagada) | |
+| Partida | Builds en partida: a distancia y cuerpo a cuerpo, lo que llevas y el siguiente paso, y "Mejor opción" en las cartas | Tab |
+| Partida | Romper objetos sin enemigos cerca | |
+| Partida | Megaevolución (25 megas), Dinamax, Teracristalización, movimiento Z, compañero y raids legendarias | G, H, T, Z |
+| Partida | Biomas nuevos, terrenos con efectos y objetos del mapa (reloj, imán, bomba, baya) | |
+| Modos | Mapas: Arena, Islas y Mazmorra por salas | Modos Nexus |
+| Menús | Progreso Nexus: cartas de partida, maldiciones, tienda, retos con Pokémon secretos, jardín de bayas y límite superado | botón en el menú |
 | Rendimiento | Resolución, pixel art nítido, límite de FPS y efectos reducidos | |
 
 ## Cómo se actualiza

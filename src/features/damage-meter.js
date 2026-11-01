@@ -36,7 +36,10 @@
 
   function render() {
     const pin = !!NX.store.get('meter:pin', false);
-    const vis = NX.isOn(KEY) && (held || pin) && NX.inRun() && !NX.shown('scr-settings') && !NX.shown('nexus-panel') && !NX.shown('nexus-hist');
+    // Tab muestra las builds por defecto (run-builds.js); el daño sale con Tab
+    // solo si se eligió "Daño" o "Ambos" en "Qué muestra Tab".
+    const tabDmg = NX.store.get('tabview', 'builds') !== 'builds';
+    const vis = NX.isOn(KEY) && ((held && tabDmg) || pin) && NX.inRun() && !NX.shown('scr-settings') && !NX.shown('nexus-panel') && !NX.shown('nexus-hist');
     el.classList.toggle('hidden', !vis);
     el.classList.toggle('nx-pin', pin);
     if (!vis) return;
@@ -86,6 +89,7 @@
         if (el) render();
       }, true);
       addEventListener('blur', () => { held = false; });
+      NX.tabHeld = () => held;
     },
   });
   let drag = null;
@@ -97,7 +101,8 @@
     keywords: 'dps tab daño movimientos',
     render(wrap) {
       wrap.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
-      wrap.appendChild(NX.ui.note('Mantén Tab en partida para ver tu daño total, el DPS y el daño de cada movimiento.'));
+      wrap.appendChild(NX.ui.note('Tu daño total, el DPS y el daño de cada movimiento. Sale con Tab si en "Qué muestra Tab" eliges Daño o Ambos, o déjalo fijo.'));
+      wrap.appendChild(NX.ui.select('Qué muestra Tab', 'tabview', [['builds', 'Builds'], ['damage', 'Daño'], ['both', 'Ambos']], 'builds'));
       wrap.appendChild(NX.ui.toggle('Dejarlo fijo en pantalla (arrastrable)', 'meter:pin', false));
       wrap.appendChild(NX.ui.toggle('Mostrar daño recibido y bajas', 'meter:taken', true));
       wrap.appendChild(NX.ui.button('Restablecer posición', () => { if (drag) drag.reset(); }));

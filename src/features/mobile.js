@@ -79,6 +79,8 @@
   const ACTIONS = [
     { id: 'panel', label: 'Ajustes de Nexus', kind: 'open', wide: true, run: () => { if (NX.togglePanel && !NX.shown('nexus-panel')) NX.togglePanel(); } },
     { id: 'map', label: 'Minimapa', feat: 'minimap', kind: 'toggle', state: () => NX.store.get('mapShown', true), run: () => press('KeyM', 'm', true) },
+    { id: 'rbuilds', label: 'Builds', feat: 'rbuilds', kind: 'toggle', state: () => !!NX.store.get('rb:pin', false),
+      run: () => { const on = !NX.store.get('rb:pin', false); NX.store.set('rb:pin', on); NX.toast(on ? 'Builds visibles' : 'Builds ocultas'); } },
     { id: 'meter', label: 'Medidor de daño', feat: 'meter', kind: 'toggle', state: () => !!NX.store.get('meter:pin', false),
       run: () => { const on = !NX.store.get('meter:pin', false); NX.store.set('meter:pin', on); NX.toast(on ? 'Medidor de daño visible' : 'Medidor de daño oculto'); } },
     { id: 'hitbox', label: 'Hitboxes', feat: 'hitboxes', kind: 'toggle', state: () => !!NX.store.get('hitbox:shown', false), run: () => press('KeyB', 'b', true) },
@@ -87,13 +89,19 @@
     { id: 'hist', label: 'Historial', feat: 'hist', kind: 'open', run: () => { if (!NX.shown('nexus-hist')) press('KeyR', 'r', true); } },
     { id: 'shot', label: 'Captura limpia', feat: 'cleancap', kind: 'run', wide: true, delay: 150, run: () => press('KeyS', 's', true) },
   ];
-  const avail = (a) => !a.feat || NX.isOn(a.feat);
+  // Las mecánicas Pokémon (Mega, Dinamax, Tera, Z) aportan sus propias acciones en NX.pm.actions().
+  const allActions = () => {
+    let extra = [];
+    try { extra = (NX.pm && typeof NX.pm.actions === 'function' && NX.pm.actions()) || []; } catch (_) { extra = []; }
+    return ACTIONS.concat(extra);
+  };
+  const avail = (a) => (!a.feat || NX.isOn(a.feat)) && (typeof a.show !== 'function' || a.show());
 
   function renderMenu() {
     const fovOn = NX.isOn('fov');
     const fov = Number(NX.store.get('fov', 1.3)) || 1;
     menu.innerHTML = `<div class="nx-mmh"><span>Nexus</span><button type="button" class="nx-mmx" data-a="close" aria-label="Cerrar">X</button></div>
-      <div class="nx-mmg">${ACTIONS.filter(avail).map((a) => {
+      <div class="nx-mmg">${allActions().filter(avail).map((a) => {
         const st = a.kind === 'toggle' ? `<i class="${a.state() ? 'on' : ''}">${a.state() ? 'Sí' : 'No'}</i>` : '';
         return `<button type="button" data-a="${a.id}"${a.wide ? ' class="nx-wide"' : ''}><span>${NX.esc(a.label)}</span>${st}</button>`;
       }).join('')}
@@ -138,7 +146,7 @@
       renderMenu();
       return;
     }
-    const a = ACTIONS.find((x) => x.id === id);
+    const a = allActions().find((x) => x.id === id);
     if (!a || !avail(a)) return;
     if (a.kind === 'toggle') { a.run(); renderMenu(); return; }
     if (a.kind === 'open') { closeMenu(true); a.run(); return; }

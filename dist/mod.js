@@ -1,13 +1,13 @@
-/*! PokeSurvivor Nexus v0.3.0 */
+/*! PokeSurvivor Nexus v0.4.0 */
 (() => {
 'use strict';
 if (window.__nexus) return;
 // El sitio público bloquea las extensiones a propósito. Nexus solo corre en el
 // laboratorio local, así que aquí se queda inactivo.
 if (location.hostname === 'pokesurvivor.com' || location.hostname.endsWith('.pokesurvivor.com')) { console.info('[nexus] inactivo en el sitio público; usa el laboratorio local'); return; }
-const NX = { version: '0.3.0' };
+const NX = { version: '0.4.0' };
 window.__nexus = {
-  version: '0.3.0',
+  version: '0.4.0',
   status: () => NX.featureList(),
   ns: () => NX.ns,
 };
@@ -885,6 +885,283 @@ NX.keys.bind((e) => e.key === 'Escape' && panel && !panel.classList.contains('hi
   });
 })();
 
+// ---- features/biomes.js
+// Biomas Nexus: paletas propias que se suman a Tiles.BIOMES (siempre por
+// nombre, nunca por índice), con enemigos, jefes y clima de cada bioma.
+// Opciones: meterlos en la rotación normal de etapas, empezar en uno y
+// quedarse en él toda la partida. Los ganchos (Tiles.runBiome, Enemies.bagAt,
+// Enemies.rollRun, Game.startRun) se instalan una sola vez y pasan de largo
+// con el módulo apagado o fuera de partida, así que el juego queda intacto.
+// Las paletas se quedan al final de BIOMES: el juego nunca llega a esos
+// índices por su cuenta.
+(() => {
+  const KEY = 'biomes';
+  const STAGE = 240; // segundos por etapa, igual que el juego
+
+  // Paleta completa en el formato del juego más los datos de Nexus.
+  const DEFS = [
+    {
+      types: ['ground', 'fire', 'rock'], weather: 'sand', theme: 'ground',
+      pal: {
+        name: 'Dunas del Ocaso', liquid: 'lava',
+        floor: ['#d9a06a', '#dea873', '#cf9661'], dirt: ['#c4875a', '#bd8052', '#ca8f62'],
+        speck: '#b47548', light: '#f0c08c', flowers: ['#ff7a4a', '#ffd76a', '#fff1d6'],
+        wallTop: ['#a8603e', '#b26b47', '#9c5838'], wallLight: '#e09a6e', wallEdge: '#3a1a10',
+        wallFace: ['#7a3f28', '#6e3823'], wallFaceDark: '#4a2417',
+        liq: '#ff5a1f', liqDeep: '#c93a12', foam: '#ffd08a', shore: '#8a4a2a',
+        prop: 'dead', leaf: ['#7a4a2e', '#94603c', '#b07a4c', '#d9a878'], trunk: ['#5e3420', '#7a4a2e'],
+        rock: ['#9a5f40', '#b87a55', '#d39c74'], grass: ['#b0763e', '#cf9a52', '#e8c27e'],
+      },
+    },
+    {
+      types: ['ice', 'water', 'steel'], weather: 'snow', theme: 'ice',
+      pal: {
+        name: 'Tundra Boreal', liquid: 'ice',
+        floor: ['#dfeef2', '#e6f3f6', '#d4e6eb'], dirt: ['#c2d8de', '#bad2d9', '#c9dde2'],
+        speck: '#aac6cf', light: '#f4fbfd', flowers: ['#7ff0c8', '#b4a8ff', '#ffffff'],
+        wallTop: ['#6e9fb0', '#78a9ba', '#6496a7'], wallLight: '#a9d4e0', wallEdge: '#1c2e38',
+        wallFace: ['#4a7384', '#426878'], wallFaceDark: '#2f4c59',
+        liq: '#8ee6f0', liqDeep: '#5fbccc', foam: '#ffffff', shore: '#9cbcc6',
+        prop: 'crystal', leaf: ['#3fc9b0', '#6fe6cc', '#a8f7e4', '#e6fff8'], trunk: ['#3d6f86', '#5590aa'],
+        rock: ['#86a8b6', '#a3c3cf', '#c4dde5'], grass: ['#9cc9c4', '#bfe3dc', '#e0f5f0'],
+      },
+    },
+    {
+      types: ['poison', 'bug', 'ghost'], weather: 'fog', theme: 'poison',
+      pal: {
+        name: 'Pantano Miasma', liquid: 'poison',
+        floor: ['#4a5634', '#515e39', '#44502f'], dirt: ['#3d462a', '#414b2d', '#384127'],
+        speck: '#333c23', light: '#6f7e4c', flowers: ['#b4ff4a', '#d07bff', '#f2e36a'],
+        wallTop: ['#3b3a2c', '#454434', '#353427'], wallLight: '#77765a', wallEdge: '#121109',
+        wallFace: ['#2a291f', '#25241b'], wallFaceDark: '#1a1913',
+        liq: '#7fd03a', liqDeep: '#5a9c26', foam: '#d9ff9a', shore: '#36402a',
+        prop: 'dead', leaf: ['#3a4228', '#4d5634', '#5f6a40', '#8c9670'], trunk: ['#2c2a1e', '#3d3a2a'],
+        rock: ['#4f5440', '#666b52', '#868b70'], grass: ['#4f6a2a', '#6f8f38', '#9cba5a'],
+      },
+    },
+    {
+      types: ['electric', 'steel', 'dark'], weather: 'rain', theme: 'electric',
+      pal: {
+        name: 'Ciudad Neón', liquid: 'spark',
+        floor: ['#2c2f45', '#31344c', '#282a3f'], dirt: ['#24263a', '#26283d', '#222436'],
+        speck: '#3d4160', light: '#4f5580', flowers: ['#ff4fd8', '#4ff0ff', '#ffe14d'],
+        wallTop: ['#3a2d5c', '#443569', '#342852'], wallLight: '#ff5ce1', wallEdge: '#0b0816',
+        wallFace: ['#241c3d', '#1f1836'], wallFaceDark: '#150f26',
+        liq: '#29e0ff', liqDeep: '#1aa3c4', foam: '#d6fbff', shore: '#22243a',
+        prop: 'crystal', leaf: ['#b23cff', '#ff4fd8', '#ff9cf0', '#ffffff'], trunk: ['#2e2a52', '#45407a'],
+        rock: ['#3f4366', '#575c85', '#767ca8'], grass: ['#3a3f6a', '#4f5aa0', '#7ad0ff'],
+      },
+    },
+    {
+      types: ['ghost', 'psychic', 'dark'], weather: null, theme: 'ghost',
+      pal: {
+        name: 'Torre Fantasma', liquid: 'water',
+        floor: ['#4b4560', '#524b68', '#463f59'], dirt: ['#3e3950', '#423c55', '#3a354b'],
+        speck: '#5c5578', light: '#7a71a0', flowers: ['#8affd8', '#c79bff', '#f0eaff'],
+        wallTop: ['#2c2640', '#352e4c', '#28223a'], wallLight: '#8f84c0', wallEdge: '#0c0a14',
+        wallFace: ['#1f1a30', '#1b172a'], wallFaceDark: '#120f1d',
+        liq: '#4fd9c0', liqDeep: '#2f9c8c', foam: '#c9fff2', shore: '#2f2a42',
+        prop: 'dead', leaf: ['#3a3352', '#4b4268', '#5d5380', '#9a90c0'], trunk: ['#262035', '#332b47'],
+        rock: ['#4f4866', '#655d82', '#8a83a8'], grass: ['#45406a', '#5f588c', '#8f88bb'],
+      },
+    },
+  ];
+  const NAMES = DEFS.map((d) => d.pal.name);
+  const BY_NAME = new Map(DEFS.map((d) => [d.pal.name, d]));
+
+  let ns = null;
+  let run = null;      // { start, list, lock } de la partida en curso
+  let starting = false;
+  const bagCache = { key: '', bag: null };
+
+  const opt = (k, d) => NX.store.get('biome:' + k, d);
+  const on = () => NX.isOn(KEY);
+  const idx = (name) => (ns ? ns.Tiles.BIOMES.findIndex((b) => b && b.name === name) : -1);
+  const defAt = (i) => { const b = ns && ns.Tiles.BIOMES[i]; return (b && BY_NAME.get(b.name)) || null; };
+  const live = () => !!run && on() && (starting || (ns.Game.state !== 'ui'));
+  const modeLock = () => { const c = NX.modes && NX.modes.ctx && NX.modes.ctx(); return c && c.biomeLock != null ? c.biomeLock : null; };
+
+  // Agrega (o refresca) las paletas al final de BIOMES.
+  function ensure() {
+    const B = ns.Tiles.BIOMES;
+    for (const d of DEFS) {
+      const i = idx(d.pal.name);
+      if (i < 0) B.push(JSON.parse(JSON.stringify(d.pal)));
+    }
+  }
+
+  function planRun(orig) {
+    ensure();
+    const mine = NAMES.map(idx).filter((i) => i >= 0);
+    const sel = String(opt('start', ''));
+    let start = null;
+    if (sel === 'random') start = mine[Math.floor(Math.random() * mine.length)];
+    else if (sel) { const i = idx(sel); if (i >= 0) start = i; }
+    let list = null;
+    if (opt('rot', true)) {
+      const o = [0, 1, 2].map((s) => orig(s));
+      list = [o[0], mine[0], o[1], mine[1], o[2], mine[2], mine[3], mine[4]].filter((v) => v != null && v >= 0);
+    }
+    return { start, list, lock: !!opt('lock', false) && start != null, k: list && start != null ? Math.max(0, list.indexOf(start)) : 0 };
+  }
+
+  // ---------------------------------------------------------------- enemigos
+  function tierOf(t) {
+    const T = ns.Enemies.TIERS || [];
+    let k = 0;
+    for (let i = 0; i < T.length; i++) if (t >= T[i].from) k = i;
+    return k;
+  }
+  function biomeBag(d, t) {
+    const key = d.pal.name + '|' + tierOf(t) + '|' + Math.floor(t / 90);
+    if (bagCache.key === key && bagCache.bag) return bagCache.bag;
+    const E = ns.Enemies;
+    const [a, b, c] = d.types;
+    let bag = [];
+    try {
+      const A = E.hordeDefs(a, t) || [];
+      bag = A.concat(A, E.hordeDefs(b, t) || [], E.hordeDefs(c, t) || []);
+    } catch (err) { NX.trip(KEY, err); bag = []; }
+    if (bag.length < 6) return null; // tramo sin suficientes Pokémon del tipo: el juego decide
+    try { ns.Sprites.preload([...new Set(bag.map((x) => x.dex))]); } catch (_) { /* se cargan al aparecer */ }
+    bagCache.key = key;
+    bagCache.bag = bag;
+    return bag;
+  }
+
+  // ---------------------------------------------------------------- jefes
+  function bossFor(d, slot, used) {
+    const SM = ns.SPRITE_META || {};
+    const lo = (slot && slot.bst ? slot.bst[0] : 480) - 40, hi = (slot && slot.bst ? slot.bst[1] : 600) + 60;
+    const pool = Object.values(ns.DEX_BY || {}).filter((m) => m && m.types && m.bst >= lo && m.bst <= hi &&
+      SM[m.dex] && !used.has(m.dex) && m.types.some((ty) => d.types.includes(ty)));
+    if (!pool.length) return null;
+    const first = pool.filter((m) => m.types.includes(d.types[0]));
+    const src = first.length >= 3 ? first : pool;
+    return src[Math.floor(Math.random() * src.length)];
+  }
+  function mutateBosses() {
+    const E = ns.Enemies, B = E.BOSSES;
+    if (!Array.isArray(B) || !opt('boss', true)) return;
+    const used = new Set(B.map((b) => b.dex));
+    const pre = [];
+    B.forEach((b, i) => {
+      const stage = Math.floor((b.at || 0) / STAGE);
+      const d = defAt(ns.Tiles.runBiome(stage));
+      if (!d) return;
+      const m = bossFor(d, (E.BOSS_SLOTS || [])[i], used);
+      if (!m) return;
+      used.add(m.dex);
+      b.dex = m.dex;
+      b.name = m.name;
+      b.nxBiome = d.pal.name;
+      pre.push(m.dex);
+    });
+    if (pre.length) { try { ns.Sprites.preload(pre); } catch (_) { /* nada */ } }
+  }
+
+  // ---------------------------------------------------------------- ganchos
+  function hook() {
+    const T = ns.Tiles, E = ns.Enemies, G = ns.Game;
+    const rb = T.runBiome;
+    const orig = (s) => rb.call(T, s);
+    T.runBiome = function (stage) {
+      const lock = modeLock();
+      if (lock != null) return lock;
+      if (!live()) return rb.apply(this, arguments);
+      try {
+        const s = Math.max(0, stage | 0);
+        if (run.start != null && (s === 0 || run.lock)) return run.start;
+        if (run.list && run.list.length) return run.list[(s + run.k) % run.list.length];
+      } catch (err) { NX.trip(KEY, err); }
+      return rb.apply(this, arguments);
+    };
+
+    const start = G.startRun;
+    G.startRun = function (opts) {
+      run = null;
+      bagCache.key = '';
+      if (on() && !opts && !(ns.Coop && ns.Coop.active)) {
+        try { run = planRun(orig); } catch (err) { NX.trip(KEY, err); run = null; }
+      }
+      starting = true;
+      try { return start.apply(this, arguments); } finally { starting = false; }
+    };
+
+    const bag = E.bagAt;
+    E.bagAt = function (t) {
+      if (!live() || !opt('foes', true)) return bag.apply(this, arguments);
+      const d = defAt(ns.World.biome);
+      if (!d) return bag.apply(this, arguments);
+      const ev = ns.Events && ns.Events.bag && ns.Events.bag();
+      if (ev) return ev;
+      return biomeBag(d, +t || 0) || bag.apply(this, arguments);
+    };
+
+    const roll = E.rollRun;
+    E.rollRun = function () {
+      const r = roll.apply(this, arguments);
+      if (live()) { try { mutateBosses(); } catch (err) { NX.trip(KEY, err); } }
+      return r;
+    };
+  }
+
+  // Clima ambiental al entrar en un bioma propio.
+  let lastBiome = -1;
+  function watch() {
+    if (!ns || !on() || !NX.inRun()) { lastBiome = -1; return; }
+    const b = ns.World.biome;
+    if (b === lastBiome) return;
+    lastBiome = b;
+    const d = defAt(b);
+    if (!d || !d.weather || !opt('weather', true)) return;
+    if ((ns.Judgment && ns.Judgment.active) || (ns.Rift && ns.Rift.inArena)) return;
+    const W = ns.Weather;
+    try { if (W && W.force && !(W.current && W.current.kind === d.weather)) W.force(d.weather, 150); } catch (err) { NX.trip(KEY, err); }
+  }
+
+  // API para otros módulos (mapas y mazmorra).
+  NX.biomes = {
+    names: () => NAMES.slice(),
+    index: (name) => { if (ns) ensure(); return idx(name); },
+    def: (name) => { const d = BY_NAME.get(name); return d ? { name, types: d.types.slice(), weather: d.weather, theme: d.theme, liquid: d.pal.liquid } : null; },
+    active: () => on(),
+  };
+
+  NX.feature({
+    key: KEY,
+    label: 'Biomas Nexus',
+    needs: (n) => n.Tiles && Array.isArray(n.Tiles.BIOMES) && typeof n.Tiles.runBiome === 'function' && n.World &&
+      typeof n.World.setBiome === 'function' && n.Enemies && typeof n.Enemies.bagAt === 'function' &&
+      typeof n.Enemies.hordeDefs === 'function' && typeof n.Enemies.rollRun === 'function' && n.Game && typeof n.Game.startRun === 'function',
+    setup(n) {
+      ns = n;
+      ensure();
+      hook();
+      NX.runs.on('end', () => { run = null; bagCache.key = ''; bagCache.bag = null; });
+      setInterval(() => { try { watch(); } catch (err) { NX.trip(KEY, err); } }, 500);
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Biomas Nexus',
+    keywords: 'biomas bioma mapa desierto dunas tundra glaciar pantano ciénaga ciudad neón torre fantasma rotación enemigos jefes clima',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.note('Cinco biomas nuevos: ' + NAMES.join(', ') + '. Cada uno trae sus propios enemigos, jefes y clima.'));
+      el.appendChild(NX.ui.toggle('Sumarlos a la rotación de etapas', 'biome:rot', true));
+      el.appendChild(NX.ui.select('Empezar en bioma', 'biome:start', [['', 'El del juego'], ['random', 'Uno nuevo al azar'], ...NAMES.map((n) => [n, n])], ''));
+      el.appendChild(NX.ui.toggle('Quedarse en el bioma inicial toda la partida', 'biome:lock', false));
+      el.appendChild(NX.ui.toggle('Enemigos propios de cada bioma', 'biome:foes', true));
+      el.appendChild(NX.ui.toggle('Jefes del bioma', 'biome:boss', true));
+      el.appendChild(NX.ui.toggle('Clima ambiental del bioma', 'biome:weather', true));
+      el.appendChild(NX.ui.note('Los cambios se aplican en la siguiente partida. El cooperativo siempre usa los biomas del juego.'));
+    },
+  });
+})();
+
 // ---- features/boss-plate.js
 // HUD rediseñado por piezas: placa de vida del jefe con estela, panel de
 // reloj (tiempo, bioma, derrotados, monedas, tickets) y colores de las barras
@@ -1121,8 +1398,11 @@ NX.keys.bind((e) => e.key === 'Escape' && panel && !panel.classList.contains('hi
     // Debajo del reloj, del aviso de próximo jefe y del texto de la arena.
     let top = 64 * k;
     if (clockShown) top = Math.max(top, clock.getBoundingClientRect().bottom + 6);
-    const pill = document.getElementById('nexus-boss');
-    if (pill && !pill.classList.contains('hidden')) top = Math.max(top, pill.getBoundingClientRect().bottom + 6);
+    // Debajo también de la píldora del modo (Modos Nexus, mazmorra).
+    for (const id of ['nexus-boss', 'nexus-mode-pill']) {
+      const pill = document.getElementById(id);
+      if (pill && !pill.classList.contains('hidden') && pill.offsetParent !== null) top = Math.max(top, pill.getBoundingClientRect().bottom + 6);
+    }
     if (ns.Rift && ns.Rift.inArena) top += 22 * k;
     style(plate, 'top', Math.round(top) + 'px');
     style(plate, 'transform', `translateX(-50%) scale(${k})`);
@@ -1353,6 +1633,66 @@ NX.keys.bind((e) => e.key === 'Escape' && panel && !panel.classList.contains('hi
   });
 })();
 
+// ---- features/breakables.js
+// Romper objetos sin enemigos cerca. El ataque automático del juego apunta
+// así: enemigo pegado, jefe a menos de 330 px, el enemigo más cercano a menos
+// de 520 px y, solo si no hay ninguno, un objeto rompible a menos de 200 px.
+// Con un enemigo lejano en pantalla nunca rompe nada, y los objetos un poco
+// lejos tampoco cuentan. Este módulo:
+// - amplía el radio de búsqueda de objetos rompibles (World.nearestBreakable);
+// - cuando el enemigo más cercano está más lejos que la distancia elegida y
+//   hay un objeto rompible más cerca, apunta al objeto. Envuelve la consulta
+//   de 520 px de Projectiles.nearest que hace el jugador; las demás consultas
+//   quedan igual.
+(() => {
+  const KEY = 'breakables';
+  const PLAYER_QUERY = 520; // radio con el que el jugador busca al enemigo más cercano
+
+  NX.feature({
+    key: KEY,
+    label: 'Romper objetos sin enemigos cerca',
+    needs: (ns) => ns.World && typeof ns.World.nearestBreakable === 'function' && ns.Projectiles && typeof ns.Projectiles.nearest === 'function',
+    setup(ns) {
+      const W = ns.World, P = ns.Projectiles;
+      const origBreak = W.nearestBreakable, origNear = P.nearest;
+      const range = () => NX.clamp(+NX.store.get('brk:range', 380) || 380, 120, 600);
+      const prefer = () => NX.clamp(+NX.store.get('brk:prefer', 300) || 0, 0, PLAYER_QUERY);
+
+      W.nearestBreakable = function (x, y, r) {
+        if (!NX.isOn(KEY)) return origBreak.apply(this, arguments);
+        return origBreak.call(this, x, y, Math.max(r || 0, range()));
+      };
+
+      P.nearest = function (list, x, y, r) {
+        const res = origNear.apply(this, arguments);
+        if (r !== PLAYER_QUERY || !NX.isOn(KEY) || !NX.inRun()) return res;
+        const me = NX.me();
+        if (!me || me.x !== x || me.y !== y) return res; // solo la consulta del jugador local
+        const far = !res || Math.hypot(res.x - x, res.y - y) > prefer();
+        if (!far) return res;
+        let prop = null;
+        try { prop = origBreak.call(W, x, y, range()); } catch (_) { prop = null; }
+        if (!prop) return res;
+        if (res && Math.hypot(res.x - x, res.y - y) <= Math.hypot(prop.x - x, prop.y - y)) return res;
+        return prop;
+      };
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Romper objetos sin enemigos cerca',
+    keywords: 'romper objetos rocas cajas cofres autoataque apuntar',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.range('Alcance para buscar objetos', 'brk:range', 120, 600, 20, 380, (v) => v + ' px'));
+      el.appendChild(NX.ui.range('Prefiere el objeto si el enemigo está a más de', 'brk:prefer', 0, 520, 20, 300, (v) => (v ? v + ' px' : 'solo si está más cerca')));
+      el.appendChild(NX.ui.note('El juego solo rompe objetos a menos de 200 px y si no hay ningún enemigo a 520 px. Esto amplía el alcance y apunta al objeto cuando los enemigos están lejos. Los ataques de contacto siguen necesitando acercarse.'));
+    },
+  });
+})();
+
 // ---- features/build-center.js
 // Centro de builds: botón "Builds" en el menú principal (y "Ver build" en la
 // ficha de la Pokédex) que abre una pantalla con el ranking de todos los
@@ -1371,7 +1711,7 @@ NX.keys.bind((e) => e.key === 'Escape' && panel && !panel.classList.contains('hi
   const num = (v, d = 0) => (+v || 0).toLocaleString('es-VE', { maximumFractionDigits: d });
 
   const st = Object.assign({ q: '', type: '', gen: '', tier: '', own: false, sort: 'nexus', sel: 0, tm: false }, NX.store.get('bc:state', {}));
-  const save = () => NX.store.set('bc:state', { type: st.type, gen: st.gen, tier: st.tier, own: st.own, sort: st.sort, sel: st.sel, tm: st.tm });
+  const save = () => NX.store.set('bc:state', { type: st.type, gen: st.gen, tier: st.tier, own: st.own, sort: st.sort, sel: st.sel, tm: st.tm, style: st.style });
 
   NX.css(`#nexus-bc{z-index:61}
 #nexus-bc .nx-bc-box{width:min(1120px,100%);max-height:calc(100vh - 60px);max-height:calc(100dvh - 60px);display:flex;flex-direction:column;gap:8px;padding:14px 16px;overflow:hidden;box-sizing:border-box}
@@ -1577,13 +1917,16 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
   const moveChip = (G, id, hit) => { const d = G.moveDef(id); return `<span class="${hit ? 'hit' : ''}" style="background:${esc(G.typeColor(d && d.type))}" title="${esc(d ? G.tr(d.desc) : id)}">${esc(G.moveName(id))}</span>`; };
 
   function nexusSec(G, r, x) {
-    if (!x) return '<section class="panel nx-bc-sec"><h4>Build Nexus</h4><p class="nx-bc-p">No se pudo calcular.</p></section>';
+    // Como la guía de SurvivorTiers: la mejor build, o la mejor a distancia o cuerpo a cuerpo.
+    const styleChips = [['', 'Mejor'], ['ranged', 'A distancia'], ['melee', 'Cuerpo a cuerpo']]
+      .map(([k, t]) => `<button type="button" class="chip${(st.style || '') === k ? ' on' : ''}" data-style="${k}">${t}</button>`).join('');
+    if (!x) return `<section class="panel nx-bc-sec"><h4><span>Build Nexus</span><span>${styleChips}</span></h4><p class="nx-bc-p">${st.style === 'melee' ? 'Este Pokémon no tiene una build cuerpo a cuerpo posible.' : 'No se pudo calcular.'}</p></section>`;
     const mv = x.moves.map((m) => `<div class="nx-bc-mv"><span class="mn" style="background:${esc(G.typeColor(m.type))}">${esc(m.name)}${m.tm ? ' <i>MT</i>' : ''}${m.evoName ? `<i>evoluciona con ${esc(m.evoName)}</i>` : ''}</span><small>${esc(m.why)}</small></div>`).join('');
     const start = x.start ? (x.startIn ? `Empieza con <b>${esc(x.startName)}</b>, que ya está en la build.` : `Su movimiento inicial es <b>${esc(x.startName)}</b>: con la mejora de inicio del Pokémon puedes empezar con uno de la build.`) : '';
     const evo = x.evoNeeds.length ? `Para evolucionar los movimientos, toma ${esc(x.evoNeeds.join(', '))} cuando estén al nivel máximo.` : '';
     const tmNote = st.tm ? (x.usedTM ? 'Incluye MT que este Pokémon puede aprender.' : 'Con sus MT la mejor build no cambia.') : '';
     return `<section class="panel nx-bc-sec"><h4><span>Build Nexus ${tierBadge(r.tier)} <small class="nx-bc-cnt">puntuación ${r.score} · puesto ${r.rank}</small></span>
-        <button type="button" class="chip${st.tm ? ' on' : ''}" data-tm title="Permitir MT en la build">Con MT</button></h4>
+        <span>${styleChips}<button type="button" class="chip${st.tm ? ' on' : ''}" data-tm title="Permitir MT en la build">Con MT</button></span></h4>
       ${mv}
       <div class="nx-bc-bars">${barRow('Daño en grupo', r.pct.crowd, 'Percentil frente a todos los Pokémon')}${barRow('Daño a jefes', r.pct.boss, 'Percentil frente a todos los Pokémon')}${barRow('Aguante', r.pct.surv, 'Percentil frente a todos los Pokémon')}</div>
       <p class="nx-bc-p">Al final de la partida: reducción de daño ${Math.round(x.late.red * 100)} %, control ${Math.round(x.late.ctrl * 100)} %, invulnerable ${Math.round(x.late.dodge * 100)} % del tiempo, regeneración ${num(x.late.regen, 1)} PS/s.</p>
@@ -1640,7 +1983,7 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
     let chips = '';
     try { chips = N.UI.typeChips(p.types); } catch (_) { chips = p.types.map(G.typeChip).join(''); }
     let x = null;
-    try { x = NX.buildModel.explain(dex, { tm: st.tm }); } catch (err) { NX.trip(KEY, err); }
+    try { x = NX.buildModel.explain(dex, { tm: st.tm, style: st.style || undefined }); } catch (err) { NX.trip(KEY, err); }
     const nexusMoves = x ? x.moves.map((m) => m.id) : r.moves;
     const lab = labApi();
     right.innerHTML = `<button type="button" class="btn small ghost nx-bc-back" data-back>‹ Volver a la lista</button>
@@ -1655,6 +1998,7 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
     right.querySelector('[data-back]').addEventListener('click', () => scr.querySelector('.nx-bc-box').classList.remove('det'));
     const tm = right.querySelector('[data-tm]');
     if (tm) tm.addEventListener('click', () => { st.tm = !st.tm; save(); renderDetail(); });
+    right.querySelectorAll('[data-style]').forEach((b) => b.addEventListener('click', () => { st.style = b.dataset.style; save(); renderDetail(); }));
     const lb = right.querySelector('[data-lab]');
     if (lb) lb.addEventListener('click', () => {
       const fn = labApi();
@@ -2314,7 +2658,11 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
     return { ids: [...ids], start, tm };
   }
 
-  function bestFor(dex, withTM) {
+  // style: undefined (la mejor sin restricción), 'ranged' (sin movimientos
+  // cuerpo a cuerpo) o 'melee' (al menos dos cuerpo a cuerpo, o uno si el
+  // Pokémon solo puede aprender uno). Así se arman las dos builds que muestra
+  // SurvivorTiers: a distancia y cuerpo a cuerpo.
+  function bestFor(dex, withTM, style) {
     const N = ns(), mon = N.DEX_BY[dex];
     if (!mon) return null;
     const mt = moveTable().by;
@@ -2324,8 +2672,12 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
     for (const id of ids) {
       const row = mt[id];
       if (!row) continue;
-      if (row.buff) buffAll.push(row); else if (row.st[1].dmg > 0) atkAll.push(attackVals(ctx, row));
+      if (row.buff) buffAll.push(row);
+      else if (row.st[1].dmg > 0 && !(style === 'ranged' && row.melee)) atkAll.push(attackVals(ctx, row));
     }
+    const meleeAll = atkAll.filter((a) => a.row.melee);
+    const needMelee = style === 'melee' ? Math.min(2, meleeAll.length) : 0;
+    if (style === 'melee' && !needMelee) return null;
     // Danza Dragón y Danza Espada comparten buff: basta con la más fuerte.
     const bestP = buffAll.filter((b) => b.st[1].buff.stat === 'patk').sort((a, b) => b.st[1].buff.total - a.st[1].buff.total)[0];
     const buffs = buffAll.filter((b) => b.st[1].buff.stat !== 'patk' || b === bestP);
@@ -2337,7 +2689,9 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
     }, 0);
     for (const a of atkAll) a.px = proxy(a);
     atkAll.sort((a, b) => b.px - a.px);
-    const atks = atkAll.slice(0, TOPK);
+    let atks = atkAll.slice(0, TOPK);
+    // En la build cuerpo a cuerpo, los mejores ataques de contacto entran a la preselección aunque no estén en el top.
+    if (needMelee) for (const a of meleeAll.slice(0, 4)) if (!atks.includes(a)) atks = [...atks.slice(0, TOPK - 1), a];
     const buffSets = [[]];
     for (let i = 0; i < buffs.length; i++) { buffSets.push([buffs[i]]); for (let j = i + 1; j < buffs.length; j++) buffSets.push([buffs[i], buffs[j]]); }
     let best = null;
@@ -2346,6 +2700,7 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
       if (k < 1) continue;
       for (const ix of idxCombos(atks.length, k)) {
         const sel = ix.map((i) => atks[i]);
+        if (needMelee && sel.filter((a) => a.row.melee).length < needMelee) continue;
         const r = evalCombo(ctx, sel, bs);
         if (!best || r.score > best.r.score) best = { r, atks: sel, buffs: bs };
       }
@@ -2435,7 +2790,7 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
   const dec = (v, d = 2) => (+v).toFixed(d).replace('.', ',');
   function explain(dex, opts = {}) {
     const G = NX.gd;
-    const b = bestFor(dex, !!opts.tm);
+    const b = bestFor(dex, !!opts.tm, opts.style);
     if (!b) return null;
     const { r, atks, buffs } = b.best;
     const L = r.st[1], E0 = r.st[0];
@@ -2486,8 +2841,77 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
     };
   }
 
+  // Las dos builds de un Pokémon (a distancia y cuerpo a cuerpo), en memoria.
+  const styleCache = new Map();
+  function styles(dex) {
+    dex = +dex;
+    if (!styleCache.has(dex)) {
+      const ranged = explain(dex, { style: 'ranged' }), melee = explain(dex, { style: 'melee' });
+      const best = ranged && melee ? (melee.raw > ranged.raw ? 'melee' : 'ranged') : ranged ? 'ranged' : melee ? 'melee' : null;
+      styleCache.set(dex, { ranged, melee, best });
+    }
+    return styleCache.get(dex);
+  }
+
+  // Valor de un conjunto de movimientos ya elegidos (para medir cuánto suma una carta nueva).
+  function setScore(dex, ids) {
+    const N = ns(), mon = N.DEX_BY[dex], mt = moveTable().by;
+    if (!mon) return 0;
+    const ctx = monCtx(mon), atks = [], buffs = [];
+    for (const id of ids) {
+      const row = mt[id];
+      if (!row) continue;
+      if (row.buff) buffs.push(row); else if (row.st[1].dmg > 0) atks.push(attackVals(ctx, row));
+    }
+    return atks.length ? evalCombo(ctx, atks, buffs).score : 0;
+  }
+
+  // Elige el estilo que conviene seguir con lo que ya llevas: el que tiene más
+  // movimientos en común; si empatan, el de mejor puntuación.
+  function pickStyle(dex, ownIds) {
+    const s = styles(dex), own = new Set(ownIds);
+    const hits = (b) => (b ? b.moves.filter((m) => own.has(m.id)).length : -1);
+    const hr = hits(s.ranged), hm = hits(s.melee);
+    if (hr === hm) return s.best;
+    return hr > hm ? 'ranged' : 'melee';
+  }
+
+  // Consejo para las cartas de subida de nivel. own = [{ id, lvl, evolved }],
+  // offers = [{ id, type: 'new'|'up'|'evo'|'stat'|... }]. Devuelve, para cada
+  // oferta, una puntuación y un motivo corto; la de mayor puntuación es la mejor opción.
+  function advise(dex, own, offers, style) {
+    const s = styles(dex);
+    const ownIds = own.map((m) => m.id);
+    style = style || pickStyle(dex, ownIds);
+    const target = s[style] || s.ranged || s.melee;
+    const tIds = new Set(target ? target.moves.map((m) => m.id) : []);
+    const shareOf = (id) => { const m = target && target.moves.find((x) => x.id === id); return m ? m.share || 0.15 : 0; };
+    const needs = new Set(target ? target.moves.filter((m) => m.evoNeed && ownIds.includes(m.id)).map((m) => m.evoNeed) : []);
+    const base = setScore(dex, ownIds);
+    const out = offers.map((o) => {
+      let score = 0, why = '';
+      if (o.type === 'new') {
+        if (ownIds.length >= 4) { score = 0; why = 'ya no te quedan huecos'; }
+        else if (tIds.has(o.id)) { score = 100 + shareOf(o.id) * 100; why = 'es de tu build'; }
+        else { const d = setScore(dex, [...ownIds, o.id]) - base; score = Math.max(0, d) * 40; why = d > 0.05 ? 'suma daño a lo que llevas' : 'aporta poco a lo que llevas'; }
+      } else if (o.type === 'up' || o.type === 'evo') {
+        const inB = tIds.has(o.id);
+        score = (inB ? 60 + shareOf(o.id) * 80 : 20) + (o.type === 'evo' ? 30 : 0);
+        why = o.type === 'evo' ? (inB ? 'evoluciona un movimiento de tu build' : 'evoluciona un movimiento') : (inB ? 'sube un movimiento de tu build' : 'sube un movimiento fuera de la build');
+      } else if (o.type === 'stat') {
+        if (needs.has(o.id)) { score = 75; why = 'es la mejora que pide una evolución de tu build'; } else { score = 12; why = 'mejora general'; }
+      } else score = 5;
+      return { id: o.id, type: o.type, score, why };
+    });
+    const best = out.reduce((a, b) => (b.score > (a ? a.score : -1) ? b : a), null);
+    return { style, target, offers: out, best: best && best.score > 0 ? best : null, styleName: style === 'melee' ? 'cuerpo a cuerpo' : 'a distancia' };
+  }
+
   NX.buildModel = {
     version: MODEL_V,
+    styles,
+    pickStyle,
+    advise,
     METHOD: 'Build Nexus: estimación con los datos del juego, no una simulación. Cada movimiento se valora al inicio (nivel 2) y al final (nivel máximo y evolucionado) con el ataque físico o especial del Pokémon, tipo propio ×1,2 si es de un solo tipo, y la eficacia y defensas de los enemigos y jefes de ese momento. Puntúa daño en grupo (50 %), daño a jefes (20 %) y aguante (30 %): vida, defensas, reducción, control, invulnerabilidad de las embestidas, velocidad, regeneración y lo rápido que matas. Prueba todas las combinaciones con hasta 2 potenciadores. No cuenta objetos, habilidades ni naturalezas.',
     status: () => state,
     error: () => lastErr,
@@ -3308,6 +3732,642 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   });
 })();
 
+// ---- features/companion.js
+// Compañero. Un segundo Pokémon, elegido entre los que tiene el jugador, lo
+// sigue durante la partida y ataca solo con un movimiento básico de su tipo:
+// un disparo al enemigo más cercano a su alcance. No tiene vida propia ni
+// puede recibir daño (no entra en la lista de enemigos ni en las colisiones
+// del juego). Usa el sprite del juego (Sprites.Animator) y sus disparos son
+// propios del módulo: golpean con Enemy.hurt y la tabla de tipos, sin pasar
+// por los proyectiles del juego (no cuentan para las estadísticas de los
+// movimientos ni cargan las barras de mega y Z).
+(() => {
+  const KEY = 'companion';
+  const S_DEX = 'pkm:comp:dex', S_POW = 'pkm:comp:pow';
+  const BASIC = {
+    normal: 'Rapidez', fire: 'Ascuas', water: 'Pistola Agua', grass: 'Hoja Afilada', electric: 'Impactrueno', ice: 'Canto Helado',
+    fighting: 'Onda Vacío', poison: 'Ácido', ground: 'Bofetón Lodo', flying: 'Tornado', psychic: 'Confusión', bug: 'Estoicismo',
+    rock: 'Lanzarrocas', ghost: 'Impresionar', dragon: 'Dracoaliento', dark: 'Mordisco', steel: 'Garra Metal', fairy: 'Viento Feérico',
+  };
+  const RANGE = 320, SPEED = 320, CD = 1.05;
+  let ns = null, pm = null, comp = null;
+
+  const owned = () => {
+    try {
+      const o = (ns && ns.DB.save && ns.DB.save.owned) || {};
+      const list = (Array.isArray(o) ? o : Object.keys(o)).map(Number).filter((d) => d > 0 && ns.DEX_BY[d] && ns.SPRITE_META[d]);
+      return [...new Set(list)].sort((a, b) => a - b);
+    } catch (_) { return []; }
+  };
+  function pickDex(p) {
+    const want = +NX.store.get(S_DEX, 0) || 0;
+    const mine = owned().filter((d) => d !== p.dex);
+    if (want && want !== p.dex && ns.DEX_BY[want] && ns.SPRITE_META[want] && (mine.includes(want) || !mine.length)) return want;
+    if (mine.length) return mine[Math.floor(Math.random() * mine.length)];
+    // Sin otros Pokémon propios (invitado nuevo): uno de los iniciales.
+    const st = (ns.STARTERS || []).map((s) => (typeof s === 'object' ? s.dex : s)).filter((d) => d && d !== p.dex && ns.SPRITE_META[d]);
+    return st.length ? st[Math.floor(Math.random() * st.length)] : 25;
+  }
+
+  async function spawn(p) {
+    const dex = pickDex(p);
+    const shiny = (() => { try { return !!ns.DB.ownsShiny(dex) && ns.Sprites.hasShiny(dex); } catch (_) { return false; } })();
+    try { await ns.Sprites.preload([dex], 3000, shiny); } catch (_) { /* se dibuja al cargar */ }
+    if (!NX.runs.current() || NX.me() !== p) return;
+    const mon = ns.DEX_BY[dex] || {};
+    const type = (mon.types || ['normal'])[0];
+    const scale = (ns.Sprites.playerScale(dex) || 1) * 0.85;
+    comp = {
+      p, dex, shiny, type, name: mon.name || '', col: pm.typeColor(type), scale,
+      anim: new ns.Sprites.Animator(dex, scale, shiny),
+      x: p.x - 30, y: p.y + 10, cd: 1.5, shots: [], walk: false, face: Math.PI / 2,
+    };
+    try { ns.FX.ring(comp.x, comp.y, 4, 30, comp.col, 0.4, 3); } catch (_) { /* nada */ }
+  }
+
+  function tick(dt, p) {
+    const c = comp;
+    if (!c || c.p !== p) return;
+    // Seguir al jugador, un poco detrás según hacia dónde camina.
+    const back = p.moveAngle != null ? p.moveAngle : Math.PI / 2;
+    const tx = p.x - Math.cos(back) * (p.r + 26) + Math.cos(back + Math.PI / 2) * 14;
+    const ty = p.y - Math.sin(back) * (p.r + 26) + Math.sin(back + Math.PI / 2) * 14;
+    const dx = tx - c.x, dy = ty - c.y, d = Math.hypot(dx, dy);
+    if (d > 520) { c.x = tx; c.y = ty; }
+    else if (d > 3) {
+      const sp = Math.min(d * 5, Math.max(120, (p.spd || 100) * 1.5));
+      c.x += (dx / d) * sp * dt;
+      c.y += (dy / d) * sp * dt;
+      c.face = Math.atan2(dy, dx);
+    }
+    const walking = d > 8;
+    if (walking !== c.walk) { c.walk = walking; try { c.anim.loop(walking ? 'Walk' : 'Idle'); } catch (_) { /* nada */ } }
+    // Atacar al más cercano.
+    c.cd -= dt;
+    if (c.cd <= 0 && !p.dead) {
+      let best = null, bd = Infinity;
+      for (const e of ns.EnemyMgr.queryCircle(c.x, c.y, RANGE)) {
+        if (!e || e.dead || e.remote || e.arceus) continue;
+        const q = (e.x - c.x) ** 2 + (e.y - c.y) ** 2;
+        if (q < bd) { bd = q; best = e; }
+      }
+      if (best) {
+        const ang = Math.atan2(best.y - c.y, best.x - c.x);
+        c.face = ang;
+        const pow = NX.clamp(+NX.store.get(S_POW, 1) || 1, 0.25, 3);
+        const dmg = (10 + 1.6 * (p.level || 1)) * (p.atk || 1) * pow;
+        c.shots.push({ x: c.x, y: c.y - 10, vx: Math.cos(ang) * SPEED, vy: Math.sin(ang) * SPEED, life: 1.25, dmg, r: 6 });
+        try { c.anim.play(ns.Sprites.animMeta(c.dex, 'Shoot') ? 'Shoot' : 'Attack', { speed: 1.4 }); } catch (_) { /* nada */ }
+        c.cd = CD;
+        c.fired = (c.fired || 0) + 1;
+      } else c.cd = 0.25;
+    }
+    try { c.anim.dir = ns.Sprites.dirFromAngle(c.face); } catch (_) { /* nada */ }
+    try { c.anim.update(dt); } catch (_) { /* nada */ }
+    // Disparos.
+    for (let i = c.shots.length - 1; i >= 0; i--) {
+      const s = c.shots[i];
+      s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt;
+      let hit = null;
+      if (s.life > 0) for (const e of ns.EnemyMgr.queryCircle(s.x, s.y + 10, s.r)) { if (e && !e.dead && !e.remote && !e.arceus) { hit = e; break; } }
+      if (hit) {
+        let k = 1;
+        try { k = ns.Types.mult(c.type, hit.types); } catch (_) { k = 1; }
+        try { hit.hurt(s.dmg * k, c.col, s.vx, s.vy, 30); c.hits = (c.hits || 0) + 1; } catch (err) { NX.trip(KEY, err); }
+        try { ns.FX.burst(s.x, s.y, c.col, 6, 80); } catch (_) { /* nada */ }
+      }
+      if (hit || s.life <= 0) c.shots.splice(i, 1);
+    }
+  }
+
+  function drawables() {
+    const c = comp;
+    if (!c || c.p !== NX.me()) return null;
+    const out = [{
+      y: c.y,
+      draw: (ctx) => {
+        try { ns.Sprites.drawShadow(ctx, c.dex, c.x, c.y, c.scale); } catch (_) { /* nada */ }
+        c.anim.draw(ctx, c.x, c.y, {});
+        // Marca de compañero: un punto del color del tipo sobre la cabeza.
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        ctx.fillStyle = c.col;
+        ctx.strokeStyle = 'rgba(11,24,56,.9)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y - (ns.Sprites.bodyHeight(c.dex, c.scale) || 30) - 6, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      },
+    }];
+    for (const s of c.shots) {
+      out.push({
+        y: s.y + 10,
+        draw: (ctx) => {
+          pm.ellipseGlow(ctx, s.x, s.y, 12, 12, c.col, 0.8);
+          ctx.save();
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        },
+      });
+    }
+    return out;
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Compañero',
+    needs: (n) => !!NX.pm && NX.featureList().some((f) => f.key === 'pokemech' && f.status === 'ok') && n.Sprites && typeof n.Sprites.Animator === 'function' &&
+      typeof n.Sprites.dirFromAngle === 'function' && n.DB && n.DEX_BY,
+    setup(n) {
+      ns = n;
+      pm = NX.pm;
+      pm.onRun('start', (p) => { comp = null; if (NX.isOn(KEY) && pm.allowed()) { p.__pkmCompTried = true; spawn(p); } });
+      pm.onRun('end', () => { comp = null; });
+      pm.onTick(KEY, tick);
+      pm.drawables(KEY, drawables);
+      // Apagado a mitad de partida: desaparece; encendido: aparece.
+      setInterval(() => {
+        const p = NX.runs.current();
+        if (!NX.isOn(KEY)) comp = null;
+        else if (p && !comp && pm.allowed() && !p.__pkmCompTried) { p.__pkmCompTried = true; spawn(p); }
+      }, 1000);
+    },
+  });
+
+  // Para pruebas desde la consola.
+  NX.companionApi = { state: () => (comp ? { same: comp.p === NX.me(), dex: comp.dex, name: comp.name, type: comp.type, x: Math.round(comp.x), y: Math.round(comp.y), shots: comp.shots.length, fired: comp.fired || 0, hits: comp.hits || 0 } : null) };
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Compañero',
+    keywords: 'compañero companero segundo pokemon seguidor aliado',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      const list = ns ? owned() : [];
+      const name = (d) => (NX.gd ? NX.gd.monName(d) : (ns && ns.DEX_BY[d] && ns.DEX_BY[d].name) || '#' + d);
+      el.appendChild(NX.ui.select('Pokémon compañero', S_DEX, [['0', 'Al azar entre los míos'], ...list.map((d) => [String(d), `#${d} ${name(d)}`])], '0'));
+      el.appendChild(NX.ui.range('Fuerza del compañero', S_POW, 0.25, 3, 0.25, 1, (v) => 'x' + v.toFixed(2)));
+      el.appendChild(NX.ui.note('Te sigue y dispara solo un movimiento básico de su tipo (' + Object.values(BASIC).slice(0, 4).join(', ') + '...) al enemigo más cercano. No tiene vida ni recibe daño. Si eliges el mismo Pokémon con el que juegas, sale otro al azar. El cambio se aplica en la próxima partida.'));
+    },
+  });
+})();
+
+// ---- features/curses.js
+// Bloque de progresión (cartas de partida, maldiciones, tienda, personajes
+// secretos, jardín y límite superado). Este archivo es el primero del bloque
+// en orden alfabético, así que aquí vive la infraestructura que comparten:
+// NX.prog con el centro "Progreso Nexus" del menú, la ventana que pausa la
+// partida, la píldora del HUD y el aviso en la pantalla final. No es un
+// módulo con interruptor; cada pieza del bloque tiene el suyo.
+//
+// Dónde se aplica el bloque: partidas normales, Modificadores e Infinito.
+// Nada en el laboratorio (sandbox), en Boss Rush (tiene su propio reparto de
+// cartas) ni en el desafío diario (tiene que ser igual para todos los
+// intentos del día), y nunca en cooperativo. El límite superado es la
+// excepción: solo cambia cartas que ya no ofrecían nada y vale en todo modo
+// en solitario.
+(() => {
+  if (NX.prog) return;
+  const P = (NX.prog = {});
+  const LIVE = new Set(['playing', 'held', 'levelup', 'choice', 'paused']);
+
+  // ---------------------------------------------------------------- reglas comunes
+  P.modeCtx = () => (NX.modes && NX.isOn('modes') && typeof NX.modes.ctx === 'function' ? NX.modes.ctx() : null);
+  P.modeOk = () => { const c = P.modeCtx(); return !c || !(c.sandbox || c.key === 'rush' || c.key === 'daily'); };
+  P.solo = () => { const ns = NX.ns; return !!ns && !!ns.Game && !(ns.Coop && ns.Coop.active); };
+  P.runOk = () => P.solo() && P.modeOk();
+  P.time = () => { const G = NX.ns && NX.ns.Game; return (G && G.st && typeof G.st.time === 'number' && G.st.time) || 0; };
+  P.live = () => { const G = NX.ns && NX.ns.Game; return !!G && !!G.player && LIVE.has(G.state); };
+  P.pct = (v) => Math.round(v * 100) + ' %';
+  P.x = (v) => 'x' + (+v).toFixed(2).replace('.', ',');
+  P.icon = (name, size = 32) => { try { return NX.ns.Icons.html(name, size); } catch (_) { return ''; } };
+  P.pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  // Elige n elementos distintos con peso w(x).
+  P.pickW = (arr, n, w) => {
+    const pool = arr.slice(), out = [];
+    while (out.length < n && pool.length) {
+      const tot = pool.reduce((s, x) => s + Math.max(0, w(x)), 0);
+      let r = Math.random() * tot, i = 0;
+      for (; i < pool.length - 1; i++) { r -= Math.max(0, w(pool[i])); if (r <= 0) break; }
+      out.push(pool.splice(i, 1)[0]);
+    }
+    return out;
+  };
+  P.say = (txt, t = 2.6) => { try { NX.ns.Spawner.say(txt, t, true); } catch (_) { NX.toast(txt); } };
+
+  // Bus de eventos entre piezas del bloque (por ejemplo, el jardín avisa a los retos).
+  const subs = {};
+  P.on = (ev, fn) => { (subs[ev] = subs[ev] || []).push(fn); };
+  P.emit = (ev, ...a) => { for (const fn of subs[ev] || []) { try { fn(...a); } catch (err) { console.warn('[nexus] prog.' + ev, err); } } };
+
+  // ---------------------------------------------------------------- estilos
+  NX.css(`#nexus-prog,#nexus-hold{z-index:9995}
+#nexus-prog .nx-pg-box{width:min(680px,100%);display:flex;flex-direction:column;gap:6px;max-height:calc(100vh - 70px);max-height:calc(100dvh - 70px);overflow:auto;overscroll-behavior:contain}
+#nexus-prog .nx-pg-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+#nexus-prog .nx-pg-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 6px}
+#nexus-prog .nx-pg-body{min-height:200px}
+.nx-pg-desc{color:var(--muted,#b9cbf0);font-size:14px;margin:2px 0 8px;text-shadow:none}
+#nexus-prog .nx-row,#nexus-hold .nx-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:3px 0;font-size:15px;cursor:pointer}
+#nexus-prog select{font:inherit;font-size:14px;background:#0b1838;color:#fff;border:1px solid #5b83d6;border-radius:6px;padding:3px 6px;max-width:62%;text-shadow:none}
+#nexus-prog .nx-rng{display:flex;align-items:center;gap:8px}#nexus-prog .nx-rng b{min-width:48px;text-align:right;color:var(--gold,#ffd23f)}
+#nexus-prog input[type=checkbox]{width:18px;height:18px;accent-color:#ffd23f}
+#nexus-prog .nx-note,#nexus-hold .nx-note{margin:4px 0;font-size:13px;color:var(--muted,#b9cbf0);text-shadow:none}
+#nexus-prog .nx-btn{font:inherit;font-size:13px;background:#0b1838;color:#fff;border:2px solid #f4f8ff;border-radius:6px;cursor:pointer;padding:3px 10px;margin:4px 6px 4px 0}
+.nx-pg-foot{display:flex;justify-content:flex-end;gap:10px;margin-top:10px;flex-wrap:wrap}
+.nx-pg-list{display:flex;flex-direction:column;gap:8px}
+.nx-pg-item{display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.22);border:2px solid rgba(244,248,255,.14);border-radius:10px;padding:6px 10px}
+.nx-pg-item .ico{flex:0 0 46px;height:46px;border-radius:10px;display:grid;place-items:center;background:rgba(255,255,255,.06)}
+.nx-pg-item .txt{flex:1;min-width:0}.nx-pg-item .nm{font-weight:700;font-size:16px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.nx-pg-item .ds{color:var(--muted,#b9cbf0);font-size:13px}
+.nx-pg-bar{height:7px;border-radius:4px;background:rgba(0,0,0,.4);overflow:hidden;margin-top:4px}.nx-pg-bar i{display:block;height:100%;background:linear-gradient(90deg,#5fe08a,#ffd23f)}
+#nexus-prog-btn small{white-space:normal}
+#nexus-hold .nx-hd-box{width:min(600px,100%);max-height:calc(100vh - 60px);max-height:calc(100dvh - 60px);overflow:auto;overscroll-behavior:contain}
+#nexus-hold .cards{margin:0 auto}
+#nexus-hold .card{cursor:pointer;border-width:2px;border-style:solid}
+#nexus-hold .card.nx-pg-dis{opacity:.45;filter:saturate(.5);cursor:not-allowed}
+#nexus-hold .card.nx-pg-dis:hover{transform:none}
+#nexus-hold .nx-hd-row{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+#nexus-hold .nx-hd-coins{display:inline-flex;align-items:center;gap:6px;color:var(--gold,#ffd23f);font-weight:700}
+#nexus-prog-pill{position:fixed;left:50%;top:84px;transform:translateX(-50%);z-index:9990;pointer-events:none;padding:2px 10px;border-radius:12px;
+  background:rgba(12,20,44,.8);color:#fff;border:2px solid #c0607a;font:12px/1.3 var(--font,'Pixelify',system-ui,sans-serif);white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
+#nexus-prog-pill.hidden{display:none}
+#over-stats .nx-pg-over{grid-column:1/-1;text-align:center;color:#ffc2d1;font-size:13px;line-height:1.35}
+#over-stats .nx-pg-over b{font-size:inherit;color:#ffe27a}
+@media (pointer:coarse),(max-width:700px),(max-height:500px){
+#nexus-prog .nx-row{min-height:42px}
+#nexus-prog input[type=checkbox]{width:24px;height:24px}
+#nexus-prog input[type=range]{width:min(42vw,200px);min-height:28px}
+#nexus-prog .nx-btn,#nexus-prog .btn,#nexus-hold .btn{min-height:40px}
+#nexus-hold .card{padding:8px 10px}
+#nexus-prog-pill{font-size:11px;padding:1px 8px}}`);
+
+  // ---------------------------------------------------------------- centro "Progreso Nexus"
+  const tabs = [];
+  let hub = null, curTab = NX.store.get('prog:tab', '');
+  P.tab = (def) => { tabs.push(def); tabs.sort((a, b) => (a.order || 0) - (b.order || 0)); };
+  const visibleTabs = () => tabs.filter((t) => NX.isOn(t.key));
+  P.inMenu = () => { const ns = NX.ns; return !!ns && !!ns.Game && ns.Game.state === 'ui'; };
+  function renderHub() {
+    const box = hub.querySelector('.nx-pg-box');
+    const list = visibleTabs();
+    if (!list.some((t) => t.key === curTab)) curTab = list.length ? list[0].key : '';
+    box.innerHTML = `<div class="nx-pg-head"><h2>Progreso Nexus</h2><button type="button" class="btn small ghost" data-x>Cerrar</button></div>
+      <div class="nx-pg-tabs">${list.map((t) => `<button type="button" class="chip${t.key === curTab ? ' on' : ''}" data-k="${NX.esc(t.key)}">${NX.esc(t.title)}</button>`).join('')}</div>
+      <div class="nx-pg-body"></div>`;
+    box.querySelector('[data-x]').addEventListener('click', P.close);
+    box.querySelectorAll('.nx-pg-tabs .chip').forEach((b) => b.addEventListener('click', () => {
+      curTab = b.dataset.k;
+      NX.store.set('prog:tab', curTab);
+      renderHub();
+    }));
+    const body = box.querySelector('.nx-pg-body');
+    const t = list.find((x) => x.key === curTab);
+    if (!t) { body.appendChild(NX.ui.note('No hay piezas de progresión activas. Actívalas con Alt+N.')); return; }
+    try { t.render(body, helpers); } catch (err) { body.appendChild(NX.ui.note('No se pudo mostrar: ' + err.message)); }
+  }
+  const helpers = {
+    desc(el, text) { const p = document.createElement('p'); p.className = 'nx-pg-desc'; p.textContent = text; el.appendChild(p); return p; },
+    foot(el, buttons) {
+      const f = document.createElement('div');
+      f.className = 'nx-pg-foot';
+      for (const [label, fn, cls] of buttons) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'btn ' + (cls || 'small'); b.textContent = label;
+        b.addEventListener('click', fn);
+        f.appendChild(b);
+      }
+      el.appendChild(f);
+      return f;
+    },
+    rerender: () => { if (hub && !hub.classList.contains('hidden')) renderHub(); },
+  };
+  P.helpers = helpers;
+  P.open = (key) => {
+    if (!hub) return;
+    if (!visibleTabs().length) { NX.toast('No hay piezas de progresión activas · Alt+N'); return; }
+    if (typeof key === 'string' && key) { curTab = key; NX.store.set('prog:tab', key); }
+    renderHub();
+    hub.classList.remove('hidden');
+  };
+  P.close = () => { if (hub) hub.classList.add('hidden'); };
+  P.refresh = () => helpers.rerender();
+
+  // ---------------------------------------------------------------- ventana que pausa la partida
+  // open(build, opts): build(box, close) llena la caja. La partida se pausa
+  // con el propio Game.togglePause (estado 'paused') y se esconde la pantalla
+  // de pausa del juego; al cerrar se reanuda igual. opts.key(e) recibe las
+  // teclas mientras la ventana está abierta (devuelve true si la usó).
+  let holdEl = null, holdCur = null;
+  const queue = [];
+  function pauseGame() {
+    const ns = NX.ns, G = ns.Game;
+    if (G.state === 'playing') G.togglePause();
+    if (G.state !== 'paused') return false;
+    try { ns.UI.hide('scr-pause'); } catch (_) { /* nada */ }
+    return true;
+  }
+  function resumeGame() {
+    const G = NX.ns.Game;
+    if (G.state === 'paused') G.togglePause();
+  }
+  P.hold = {
+    active: () => !!holdCur,
+    // Abre ahora si se puede; si no, queda en cola y se abre cuando la partida esté en juego.
+    open(build, opts = {}) {
+      const item = { build, opts, player: NX.ns && NX.ns.Game.player };
+      queue.push(item);
+      pump();
+      return item;
+    },
+    close() { closeHold(true); },
+  };
+  function pump() {
+    if (holdCur || !queue.length || !holdEl) return;
+    const ns = NX.ns;
+    const it = queue[0];
+    if (!ns || ns.Game.player !== it.player || !P.live()) { queue.shift(); pump(); return; }
+    if (ns.Game.state !== 'playing') return; // espera a que termine la subida de nivel u otra elección
+    if (!pauseGame()) return;
+    queue.shift();
+    holdCur = it;
+    const box = holdEl.querySelector('.nx-hd-box');
+    box.innerHTML = '';
+    try { it.build(box, () => closeHold(true)); } catch (err) { console.warn('[nexus] prog.hold', err); closeHold(true); return; }
+    holdEl.classList.remove('hidden');
+  }
+  function closeHold(resume) {
+    const it = holdCur;
+    holdCur = null;
+    if (holdEl) { holdEl.classList.add('hidden'); holdEl.querySelector('.nx-hd-box').innerHTML = ''; }
+    if (it && it.opts.onClose) { try { it.opts.onClose(); } catch (_) { /* nada */ } }
+    if (resume && NX.ns && NX.ns.Game.player === (it && it.player)) resumeGame();
+    setTimeout(pump, 400);
+  }
+  // Vigila: si la partida terminó, cierra sin reanudar; si alguien la
+  // reanudó por fuera, vuelve a pausarla; la pausa del juego queda oculta.
+  setInterval(() => {
+    const ns = NX.ns;
+    if (!ns || !ns.Game) return;
+    if (holdCur) {
+      const G = ns.Game;
+      if (G.player !== holdCur.player || G.state === 'over' || G.state === 'ui') { closeHold(false); queue.length = 0; return; }
+      if (G.state === 'playing') pauseGame();
+      else if (G.state === 'paused') { try { if (ns.UI.isOpen('scr-pause')) ns.UI.hide('scr-pause'); } catch (_) { /* nada */ } }
+    } else pump();
+  }, 200);
+  NX.keys.bind(() => !!holdCur, (e) => {
+    if (e.altKey && e.code === 'KeyN') return false;
+    const fn = holdCur && holdCur.opts.key;
+    if (fn) { try { fn(e); } catch (err) { console.warn('[nexus] prog.hold', err); } }
+    return true; // ninguna tecla llega al juego mientras la ventana está abierta
+  });
+  NX.keys.bind((e) => e.key === 'Escape' && hub && !hub.classList.contains('hidden'), () => { P.close(); return true; });
+
+  // ---------------------------------------------------------------- píldora y pantalla final
+  const pills = []; // [key, fn]
+  P.pill = (key, fn) => pills.push([key, fn]);
+  let pillEl = null;
+  function pillTick() {
+    if (!pillEl) return;
+    const ns = NX.ns;
+    const st = ns && ns.Game && ns.Game.state;
+    if (!P.live() || st === 'paused' || !NX.store.get('prog:pill', true)) { pillEl.classList.add('hidden'); return; }
+    const parts = [];
+    for (const [k, fn] of pills) {
+      if (!NX.isOn(k)) continue;
+      try { const t = fn(); if (t) parts.push(t); } catch (err) { NX.trip(k, err); }
+    }
+    if (!parts.length) { pillEl.classList.add('hidden'); return; }
+    const txt = parts.join(' · ');
+    if (pillEl.textContent !== txt) pillEl.textContent = txt;
+    // Debajo de la píldora de Modos Nexus si está a la vista.
+    const mp = document.getElementById('nexus-mode-pill');
+    const top = mp && !mp.classList.contains('hidden') ? Math.round(mp.getBoundingClientRect().bottom + 4) + 'px' : '';
+    if (pillEl.style.top !== top) pillEl.style.top = top;
+    pillEl.classList.remove('hidden');
+  }
+  // Agrega una línea a la pantalla final del juego (reintenta mientras se arma).
+  P.overLine = (html, tries = 12) => {
+    const box = document.getElementById('over-stats');
+    const ns = NX.ns;
+    if (!box || !ns || ns.Game.state !== 'over' || !box.children.length) { if (tries > 0) setTimeout(() => P.overLine(html, tries - 1), 250); return; }
+    const d = document.createElement('div');
+    d.className = 'nx-pg-over';
+    d.innerHTML = html;
+    box.appendChild(d);
+  };
+
+  NX.onReady(() => {
+    hub = document.createElement('section');
+    hub.id = 'nexus-prog';
+    hub.className = 'scr dim hidden';
+    hub.innerHTML = '<div class="box nx-pg-box"></div>';
+    holdEl = document.createElement('section');
+    holdEl.id = 'nexus-hold';
+    holdEl.className = 'scr dim hidden';
+    holdEl.innerHTML = '<div class="box center nx-hd-box"></div>';
+    for (const el of [hub, holdEl]) {
+      for (const ev of ['pointerdown', 'mousedown', 'touchstart', 'click', 'wheel']) el.addEventListener(ev, (e) => e.stopPropagation());
+      el.addEventListener('keydown', (e) => { if (e.key !== 'Escape') e.stopPropagation(); });
+      document.body.appendChild(el);
+    }
+    hub.addEventListener('click', (e) => { if (e.target === hub) P.close(); });
+    pillEl = document.createElement('div');
+    pillEl.id = 'nexus-prog-pill';
+    pillEl.className = 'hidden';
+    document.body.appendChild(pillEl);
+    setInterval(pillTick, 250);
+
+    // Botón del menú principal, debajo de Modos Nexus (o de Jugar).
+    const place = () => {
+      let b = document.getElementById('nexus-prog-btn');
+      const play = document.querySelector('#scr-menu [data-go="play"]');
+      if (!visibleTabs().length) { if (b) b.remove(); return; }
+      if (!play) return;
+      const after = document.getElementById('nexus-modes-btn') || play;
+      if (!b) {
+        b = document.createElement('button');
+        b.type = 'button';
+        b.id = 'nexus-prog-btn';
+        b.className = 'menu-item';
+        b.dataset.sfx = 'confirm';
+        b.innerHTML = '<span class="mi-ico" aria-hidden="true">✦</span><span>Progreso Nexus</span><small>Maldiciones, jardín de bayas, retos secretos y cartas</small>';
+        b.addEventListener('click', (e) => { e.stopPropagation(); b.blur(); P.open(); });
+      }
+      if (after.nextElementSibling !== b) after.after(b);
+    };
+    setInterval(() => {
+      place();
+      if (hub && !hub.classList.contains('hidden') && !P.inMenu()) P.close();
+    }, 500);
+  });
+})();
+
+// ---------------------------------------------------------------- Maldiciones
+// Dificultad voluntaria y acumulable. Cada maldición tiene nivel 0 a 3 y suma
+// a un multiplicador que se ve en el menú y en la partida. El premio: las
+// Pokémonedas del final se multiplican por él (vía coinMul del jugador, que
+// el juego usa al cerrar la partida) y la experiencia gana la mitad de ese
+// extra. Todo lo tocado vive en el jugador de esa partida, que el juego
+// descarta al terminar; los tiempos de los jefes se devuelven al cerrar.
+(() => {
+  const KEY = 'curses';
+  const P = NX.prog;
+  const CURSES = [
+    { id: 'horde', name: 'Horda', icon: 'fist', per: '+25 % de enemigos', reward: 0.15 },
+    { id: 'haste', name: 'Prisa', icon: 'boot', per: '+10 % de velocidad enemiga', reward: 0.12 },
+    { id: 'wound', name: 'Herida', icon: 'heart', per: '-25 % de curación y regeneración', reward: 0.12 },
+    { id: 'boss', name: 'Jefes impacientes', icon: 'clock', per: 'Los jefes llegan un 15 % antes', reward: 0.1 },
+    { id: 'tough', name: 'Piel dura', icon: 'shield', per: '+20 % de vida enemiga', reward: 0.12 },
+    { id: 'pain', name: 'Golpes duros', icon: 'bomb', per: '+15 % de daño recibido', reward: 0.12 },
+  ];
+  const MAX = 3;
+  const lv = (id) => NX.clamp(Math.round(+NX.store.get('curses:lv:' + id, 0) || 0), 0, MAX);
+  const levels = () => Object.fromEntries(CURSES.map((c) => [c.id, lv(c.id)]));
+  const mulOf = (L) => 1 + CURSES.reduce((s, c) => s + (L[c.id] || 0) * c.reward, 0);
+  let ns = null, run = null;
+  const act = () => (run && NX.isOn(KEY) && ns.Game.player === run.player ? run : null);
+
+  // Para otras piezas (retos secretos): multiplicador de la partida en curso.
+  P.curseMul = () => { const r = act(); return r ? r.mul : 1; };
+  P.curseSetup = () => mulOf(levels());
+
+  function start(p) {
+    if (!NX.isOn(KEY) || !P.runOk()) return;
+    const L = levels(), mul = mulOf(L);
+    if (mul <= 1) return;
+    run = { player: p, lv: L, mul };
+    p.coinMul = (p.coinMul || 1) * mul;
+    p.xpMul = (p.xpMul || 1) * (1 + (mul - 1) / 2);
+    const B = ns.Enemies && ns.Enemies.BOSSES;
+    if (L.boss && Array.isArray(B)) {
+      run.bossArr = B;
+      run.bossAt = B.map((b) => b.at);
+      const k = 1 - 0.15 * L.boss;
+      for (const b of B) if (typeof b.at === 'number') b.at = Math.max(30, Math.round(b.at * k));
+    }
+    P.say('Maldiciones activas ' + P.x(mul), 3);
+  }
+  function end(p) {
+    if (!run || run.player !== p) return;
+    const r = run;
+    run = null;
+    try { if (r.bossArr && r.bossAt) r.bossArr.forEach((b, i) => { if (b && r.bossAt[i] != null) b.at = r.bossAt[i]; }); } catch (_) { /* nada */ }
+    if (ns.Game.state === 'over') P.overLine(`<b>Maldiciones ${P.x(r.mul)}</b>: +${Math.round((r.mul - 1) * 100)} % de Pokémonedas y +${Math.round((r.mul - 1) * 50)} % de experiencia`);
+  }
+
+  function hook() {
+    const PP = ns.Player.prototype, E = ns.Enemies, C = ns.Coop;
+    if (C && typeof C.scaleRate === 'function') {
+      const sr = C.scaleRate;
+      C.scaleRate = function () {
+        const v = sr.apply(this, arguments);
+        const r = act();
+        return r && r.lv.horde && !C.active ? v * (1 + 0.25 * r.lv.horde) : v;
+      };
+    }
+    for (const k of ['scale', 'bossScale']) {
+      const f = E[k];
+      if (typeof f !== 'function') continue;
+      E[k] = function () {
+        const v = f.apply(this, arguments);
+        const r = act();
+        if (!r || !v || typeof v !== 'object') return v;
+        const o = Object.assign({}, v);
+        if (r.lv.tough && typeof o.hp === 'number') o.hp *= 1 + 0.2 * r.lv.tough;
+        if (r.lv.haste && k === 'scale' && typeof o.spd === 'number') o.spd *= 1 + 0.1 * r.lv.haste;
+        return o;
+      };
+    }
+    const heal = PP.heal;
+    PP.heal = function (n) {
+      const r = act();
+      if (r && r.lv.wound && this === r.player && typeof n === 'number') {
+        const a = Array.prototype.slice.call(arguments);
+        a[0] = n * (1 - 0.25 * r.lv.wound);
+        return heal.apply(this, a);
+      }
+      return heal.apply(this, arguments);
+    };
+    const rd = Object.getOwnPropertyDescriptor(PP, 'regen');
+    if (rd && rd.get && rd.configurable) {
+      Object.defineProperty(PP, 'regen', {
+        configurable: true, enumerable: rd.enumerable,
+        get() { const v = rd.get.call(this); const r = act(); return r && r.lv.wound && this === r.player ? v * (1 - 0.25 * r.lv.wound) : v; },
+      });
+    }
+    const hurt = PP.hurt;
+    PP.hurt = function (dmg) {
+      const r = act();
+      if (r && r.lv.pain && this === r.player && typeof dmg === 'number') {
+        const a = Array.prototype.slice.call(arguments);
+        a[0] = dmg * (1 + 0.15 * r.lv.pain);
+        return hurt.apply(this, a);
+      }
+      return hurt.apply(this, arguments);
+    };
+  }
+
+  function controls(el, onChange) {
+    const sum = document.createElement('p');
+    sum.className = 'nx-note';
+    const upd = () => {
+      const m = mulOf(levels());
+      sum.innerHTML = m > 1
+        ? `Multiplicador <b style="color:#ffc2d1">${P.x(m)}</b>: +${Math.round((m - 1) * 100)} % de Pokémonedas al final y +${Math.round((m - 1) * 50)} % de experiencia.`
+        : 'Sin maldiciones: la partida es la de siempre.';
+    };
+    for (const c of CURSES) {
+      el.appendChild(NX.ui.range(`${c.name} · ${c.per} por nivel (+${Math.round(c.reward * 100)} %)`, 'curses:lv:' + c.id, 0, MAX, 1, 0,
+        (v) => (v ? 'Nv. ' + v : 'No'), () => { upd(); if (onChange) onChange(); }));
+    }
+    upd();
+    el.appendChild(sum);
+    return upd;
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Maldiciones',
+    needs: (n) => n.Game && n.Player && n.Player.prototype && typeof n.Player.prototype.heal === 'function' &&
+      typeof n.Player.prototype.hurt === 'function' && n.Enemies && typeof n.Enemies.scale === 'function' && n.Coop && typeof n.Coop.scaleRate === 'function',
+    setup(n) {
+      ns = n;
+      hook();
+      NX.runs.on('start', (p) => { try { start(p); } catch (err) { NX.trip(KEY, err); } });
+      NX.runs.on('end', (p) => { try { end(p); } catch (err) { NX.trip(KEY, err); } });
+      P.pill(KEY, () => { const r = act(); return r ? 'Maldición ' + P.x(r.mul) : ''; });
+      P.tab({
+        key: KEY, title: 'Maldiciones', order: 1,
+        render(el, h) {
+          h.desc(el, 'Dificultad voluntaria y acumulable para las partidas normales, Modificadores e Infinito. Cuanto más alto el multiplicador, más Pokémonedas al final y más experiencia. No se aplica en el laboratorio, Boss Rush, el desafío diario ni el cooperativo.');
+          controls(el);
+          h.foot(el, [['Quitar todas', () => { for (const c of CURSES) NX.store.set('curses:lv:' + c.id, 0); h.rerender(); }]]);
+        },
+      });
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Modos',
+    title: 'Maldiciones',
+    keywords: 'maldiciones dificultad horda prisa herida jefes piel dura golpes multiplicador monedas experiencia progreso',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.toggle('Píldora del bloque de progresión en la partida', 'prog:pill', true));
+      controls(el);
+      el.appendChild(NX.ui.button('Abrir Progreso Nexus', () => { if (!P.inMenu()) { NX.toast('Ábrelo desde el menú principal'); return; } NX.togglePanel(); P.open(KEY); }));
+    },
+  });
+})();
+
 // ---- features/daily.js
 // Desafío diario: la fecha local es la semilla. Cada día sortea el Pokémon
 // inicial (entre los iniciales del juego), dos o tres modificadores y el mapa.
@@ -3471,7 +4531,10 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
 
   function render() {
     const pin = !!NX.store.get('meter:pin', false);
-    const vis = NX.isOn(KEY) && (held || pin) && NX.inRun() && !NX.shown('scr-settings') && !NX.shown('nexus-panel') && !NX.shown('nexus-hist');
+    // Tab muestra las builds por defecto (run-builds.js); el daño sale con Tab
+    // solo si se eligió "Daño" o "Ambos" en "Qué muestra Tab".
+    const tabDmg = NX.store.get('tabview', 'builds') !== 'builds';
+    const vis = NX.isOn(KEY) && ((held && tabDmg) || pin) && NX.inRun() && !NX.shown('scr-settings') && !NX.shown('nexus-panel') && !NX.shown('nexus-hist');
     el.classList.toggle('hidden', !vis);
     el.classList.toggle('nx-pin', pin);
     if (!vis) return;
@@ -3521,6 +4584,7 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
         if (el) render();
       }, true);
       addEventListener('blur', () => { held = false; });
+      NX.tabHeld = () => held;
     },
   });
   let drag = null;
@@ -3532,7 +4596,8 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
     keywords: 'dps tab daño movimientos',
     render(wrap) {
       wrap.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
-      wrap.appendChild(NX.ui.note('Mantén Tab en partida para ver tu daño total, el DPS y el daño de cada movimiento.'));
+      wrap.appendChild(NX.ui.note('Tu daño total, el DPS y el daño de cada movimiento. Sale con Tab si en "Qué muestra Tab" eliges Daño o Ambos, o déjalo fijo.'));
+      wrap.appendChild(NX.ui.select('Qué muestra Tab', 'tabview', [['builds', 'Builds'], ['damage', 'Daño'], ['both', 'Ambos']], 'builds'));
       wrap.appendChild(NX.ui.toggle('Dejarlo fijo en pantalla (arrastrable)', 'meter:pin', false));
       wrap.appendChild(NX.ui.toggle('Mostrar daño recibido y bajas', 'meter:taken', true));
       wrap.appendChild(NX.ui.button('Restablecer posición', () => { if (drag) drag.reset(); }));
@@ -3919,6 +4984,167 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
       el.appendChild(NX.ui.note(`Suma orden por tipo y estadísticas, filtros extra, comparador y notas en Pokémon. Notas guardadas: ${n}. ` +
         (tiers ? 'Tiers de SurvivorTiers disponibles.' : 'Sin datos de SurvivorTiers en este modo: el comparador no muestra tier.')));
       el.appendChild(NX.ui.button('Abrir comparador', () => { if (NX.ns) { NX.togglePanel(); openCompare(); } }));
+    },
+  });
+})();
+
+// ---- features/dynamax.js
+// Dinamax. Una vez por partida (o una vez por cada jefe, según el ajuste), la
+// tecla H, el botón DMAX del HUD o su toque vuelven gigante al Pokémon por
+// 15 segundos: el doble de tamaño y de radio (colisión y anillos), más vida
+// (conserva la proporción) y ataques con área ampliada (radio, tamaño,
+// ancho y alcance de los movimientos se agrandan mientras el juego los
+// lanza, ver pokemech-core.js). Sin sprites Gigamax: es el mismo sprite.
+// No se combina con la megaevolución, que también cambia la forma.
+(() => {
+  const KEY = 'dynamax';
+  const S_MODE = 'pkm:dmax:mode', S_DUR = 'pkm:dmax:dur', S_HP = 'pkm:dmax:hp', S_AREA = 'pkm:dmax:area';
+  const RED = '#ff2d6f', PINK = '#ff7ab0';
+  let ns = null, pm = null, run = null;
+
+  const mode = () => NX.store.get(S_MODE, 'run');
+  const bossUp = () => { try { return !!ns.EnemyMgr.bossAlive(); } catch (_) { return false; } };
+  const canUse = (p) => {
+    if (!run || run.active || p.dead || pm.formActive(p)) return false;
+    if (mode() === 'boss') return bossUp() && !run.usedBoss;
+    return !run.used;
+  };
+
+  function activate() {
+    const p = run && run.p;
+    if (!p || !canUse(p)) {
+      if (p && run && run.active == null && mode() === 'boss' && !bossUp()) NX.toast('El Dinamax se usa contra un jefe');
+      return;
+    }
+    const dur = NX.clamp(+NX.store.get(S_DUR, 15) || 15, 5, 60);
+    const hp = NX.clamp(+NX.store.get(S_HP, 1.5) || 1.5, 1, 3);
+    const area = NX.clamp(+NX.store.get(S_AREA, 1.6) || 1.6, 1, 3);
+    pm.setMod(p, KEY, { form: true, size: 2, hp, area });
+    run.active = { t: dur, dur, t0: performance.now() };
+    run.used = true;
+    run.usedBoss = true;
+    p.invuln = Math.max(p.invuln || 0, 1);
+    pm.sfx('quake');
+    pm.kick(1.2);
+    pm.flash(RED, 0.5, 0.4);
+    pm.bigText('¡Dinamax!', RED, `${p.mon.name || 'Tu Pokémon'} se volvió gigante`);
+    try {
+      for (let i = 0; i < 3; i++) ns.FX.ring(p.x, p.y, 8 + i * 10, 90 + i * 40, i % 2 ? PINK : RED, 0.5 + i * 0.15, 5);
+      ns.FX.burst(p.x, p.y - p.bodyH * 0.5, RED, 26, 200);
+    } catch (_) { /* sin efectos */ }
+  }
+
+  function revert(quiet) {
+    const p = run && run.p;
+    if (!run || !run.active) return;
+    run.active = null;
+    if (!p) return;
+    pm.clearMod(p, KEY);
+    if (!quiet) {
+      try { ns.FX.ring(p.x, p.y, 10, 70, PINK, 0.45, 4); ns.FX.burst(p.x, p.y - p.bodyH * 0.5, PINK, 14, 120); } catch (_) { /* nada */ }
+      NX.toast('El Dinamax terminó');
+    }
+  }
+
+  function tick(dt, p) {
+    if (!run || run.p !== p) return;
+    // Modo por jefe: cada jefe nuevo devuelve el uso.
+    if (mode() === 'boss') {
+      const up = bossUp();
+      if (up && !run.bossWas) run.usedBoss = false;
+      run.bossWas = up;
+    }
+    if (!run.active) return;
+    run.active.t -= dt;
+    if (run.active.t <= 0 || p.dead || !pm.hasMod(p, KEY)) revert();
+  }
+
+  // Nubes rojas alrededor y sobre la cabeza, como en Galar.
+  function drawAura(ctx, p, front) {
+    const a = run.active, now = performance.now() / 1000;
+    const k = Math.min(1, (performance.now() - a.t0) / 400) * Math.min(1, a.t / 0.6 + 0.2);
+    if (!front) {
+      pm.ellipseGlow(ctx, p.x, p.y, p.r * 2.6, p.r * 1.2, 'rgba(255,45,111,.6)', 0.6 * k);
+      ctx.save();
+      ctx.globalAlpha = 0.5 * k;
+      ctx.strokeStyle = RED;
+      ctx.lineWidth = 3;
+      ctx.setLineDash([10, 8]);
+      ctx.lineDashOffset = -now * 40;
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y, p.r * 2.2, p.r * 0.9, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    ctx.save();
+    const top = p.y - p.bodyH - 6;
+    for (let i = 0; i < 7; i++) {
+      const ang = now * 0.9 + i * 0.9;
+      const x = p.x + Math.cos(ang) * p.r * 1.3, y = top + Math.sin(ang * 1.7) * 4;
+      const r = 6 + 3 * Math.sin(now * 2 + i);
+      ctx.globalAlpha = 0.45 * k;
+      ctx.fillStyle = i % 2 ? PINK : RED;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Chispas que suben por el cuerpo.
+    for (let i = 0; i < 8; i++) {
+      const ph = (now * 0.8 + i / 8) % 1;
+      ctx.globalAlpha = (1 - ph) * 0.7 * k;
+      ctx.fillStyle = '#ffd1e0';
+      ctx.fillRect(p.x + Math.cos(i * 2.4) * p.r * 1.2 - 1, p.y - ph * p.bodyH * 1.2, 2, 4);
+    }
+    ctx.restore();
+  }
+  function drawables() {
+    const p = run && run.p;
+    if (!p || !run.active || p !== NX.me()) return null;
+    return [{ y: p.y - 0.5, draw: (ctx) => drawAura(ctx, p, false) }, { y: p.y + 0.5, draw: (ctx) => drawAura(ctx, p, true) }];
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Dinamax',
+    needs: (n) => !!NX.pm && NX.featureList().some((f) => f.key === 'pokemech' && f.status === 'ok') && n.EnemyMgr && typeof n.EnemyMgr.bossAlive === 'function',
+    setup(n) {
+      ns = n;
+      pm = NX.pm;
+      pm.onRun('start', (p) => { run = { p, used: false, usedBoss: false, bossWas: false, active: null }; });
+      pm.onRun('end', () => { run = null; });
+      pm.onTick(KEY, tick);
+      pm.drawables(KEY, drawables);
+      pm.button({
+        id: KEY, feat: KEY, label: 'DMAX', title: 'Dinamax', key: 'H', keyCode: 'KeyH', color: RED,
+        state() {
+          const p = run && run.p;
+          if (!p || p !== NX.me() || !pm.allowed()) return null;
+          if (run.active) return { show: true, active: NX.clamp(run.active.t / run.active.dur, 0, 1) };
+          const m = mode();
+          const left = m === 'boss' ? !run.usedBoss : !run.used;
+          if (!left && m === 'run') return null;
+          const ready = canUse(p);
+          return { show: true, ready, frac: ready ? 1 : 0 };
+        },
+        run: activate,
+      });
+      setInterval(() => { if (run && run.active && !NX.isOn(KEY)) revert(true); }, 500);
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Dinamax',
+    keywords: 'dinamax dynamax gigante gigamax tamaño',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.select('Usos', S_MODE, [['run', 'Una vez por partida'], ['boss', 'Una vez por cada jefe']], 'run'));
+      el.appendChild(NX.ui.range('Duración', S_DUR, 5, 30, 1, 15, (v) => v + ' s'));
+      el.appendChild(NX.ui.range('Vida durante el Dinamax', S_HP, 1, 2.5, 0.1, 1.5, (v) => 'x' + v.toFixed(1)));
+      el.appendChild(NX.ui.range('Área de los ataques', S_AREA, 1, 2.5, 0.1, 1.6, (v) => 'x' + v.toFixed(1)));
+      el.appendChild(NX.ui.note('H o el botón DMAX. Duplica tamaño y radio, sube la vida conservando la proporción y agranda el área de los ataques. No se combina con la megaevolución. En modo "por jefe" solo se activa con un jefe en pantalla.'));
     },
   });
 })();
@@ -5521,6 +6747,201 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   }
 })();
 
+// ---- features/garden.js
+// Jardín de bayas: en las partidas ganas semillas (1 cada 3 minutos y 1 por
+// jefe). Entre partidas las siembras en 4 parcelas; crecen con tiempo real y
+// al cosecharlas pasan a la cesta. La siguiente partida válida (normal,
+// Modificadores o Infinito) toma una baya de cada tipo que haya en la cesta y
+// aplica su bonificación al jugador de esa partida. Todo vive en NX.store.
+(() => {
+  const KEY = 'garden';
+  const P = NX.prog;
+  const ST = 'garden:v1';
+  const PLOTS = 4;
+  const MIN = 60000;
+  const BERRIES = [
+    { id: 'aranja', name: 'Baya Aranja', col: '#4fb4ff', grow: 15, w: 30, bonus: '+25 de vida máxima', apply: (p) => p.addMaxHp(25) },
+    { id: 'aslac', name: 'Baya Aslac', col: '#5fe08a', grow: 30, w: 25, bonus: '+8 % de velocidad', apply: (p) => { p.spdMul *= 1.08; } },
+    { id: 'zanama', name: 'Baya Zanama', col: '#ff9a3d', grow: 30, w: 20, bonus: '+15 % de experiencia', apply: (p) => { p.xpMul *= 1.15; } },
+    { id: 'lichi', name: 'Baya Lichi', col: '#ff5f6d', grow: 45, w: 15, bonus: '+8 % de daño', apply: (p) => { p.atkMul *= 1.08; } },
+    { id: 'arabol', name: 'Baya Arabol', col: '#ffd23f', grow: 60, w: 10, bonus: 'Suerte: +5 % de críticos y +10 % de Pokémonedas', apply: (p) => { p.critChance = (p.critChance || 0) + 0.05; p.coinMul = (p.coinMul || 1) * 1.1; } },
+  ];
+  const BY = Object.fromEntries(BERRIES.map((b) => [b.id, b]));
+  let ns = null, run = null, sel = '';
+
+  function load() {
+    const s = NX.store.get(ST, null) || {};
+    const plots = Array.isArray(s.plots) ? s.plots.slice(0, PLOTS) : [];
+    while (plots.length < PLOTS) plots.push(null);
+    return { seeds: s.seeds || {}, basket: s.basket || {}, plots, harvested: s.harvested || 0, planted: s.planted || 0 };
+  }
+  const save = (s) => NX.store.set(ST, s);
+  P.gardenHarvested = () => load().harvested;
+  const ready = (pl) => !!pl && Date.now() - pl.at >= BY[pl.b].grow * MIN;
+  const left = (pl) => Math.max(0, BY[pl.b].grow * MIN - (Date.now() - pl.at));
+  const fmtLeft = (ms) => { const m = Math.ceil(ms / MIN); return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min'; };
+  const berryIco = (b, size = 30) => `<svg width="${size}" height="${size}" viewBox="0 0 12 12" aria-hidden="true" style="image-rendering:pixelated"><path d="M5 1h2v2H5z" fill="#3c8a3a"/><path d="M3 3h6v1h1v4H9v1H8v1H4V9H3V8H2V4h1z" fill="${b.col}"/><path d="M4 4h1v2H4z" fill="#fff" opacity=".7"/></svg>`;
+
+  // ---------------------------------------------------------------- acciones
+  function plant(i, b) {
+    const s = load();
+    if (s.plots[i] || !(s.seeds[b] > 0)) return false;
+    s.seeds[b]--;
+    s.plots[i] = { b, at: Date.now() };
+    s.planted++;
+    save(s);
+    return true;
+  }
+  function harvest(i) {
+    const s = load(), pl = s.plots[i];
+    if (!ready(pl)) return false;
+    s.plots[i] = null;
+    s.basket[pl.b] = (s.basket[pl.b] || 0) + 1;
+    s.harvested++;
+    save(s);
+    P.emit('harvest', s.harvested);
+    return true;
+  }
+  function harvestAll() { let n = 0; for (let i = 0; i < PLOTS; i++) if (harvest(i)) n++; return n; }
+  function giveSeeds(n) {
+    const s = load(), got = {};
+    for (let k = 0; k < n; k++) {
+      const b = P.pickW(BERRIES, 1, (x) => x.w)[0];
+      s.seeds[b.id] = (s.seeds[b.id] || 0) + 1;
+      got[b.id] = (got[b.id] || 0) + 1;
+    }
+    save(s);
+    return got;
+  }
+
+  // ---------------------------------------------------------------- partida
+  function start(p) {
+    run = null;
+    if (!NX.isOn(KEY) || !P.runOk()) return;
+    run = { player: p };
+    if (!NX.store.get('garden:auto', true)) return;
+    const s = load(), used = [];
+    for (const b of BERRIES) {
+      if (!(s.basket[b.id] > 0)) continue;
+      try { b.apply(p); s.basket[b.id]--; used.push(b); } catch (err) { NX.trip(KEY, err); }
+    }
+    if (!used.length) return;
+    save(s);
+    run.used = used.map((b) => b.id);
+    setTimeout(() => P.say('Bayas del jardín: ' + used.map((b) => b.bonus).join(', '), 3.5), 3800);
+  }
+  function end(p, how) {
+    if (!run || run.player !== p) return;
+    run = null;
+    if (how === 'replaced') return;
+    const t = P.time();
+    if (t < 60) return;
+    const n = Math.min(8, Math.floor(t / 180) + (p.bosses || 0));
+    if (n <= 0) return;
+    const got = giveSeeds(n);
+    const txt = Object.entries(got).map(([id, k]) => `${k} ${BY[id].name.replace('Baya ', '')}`).join(', ');
+    if (ns.Game.state === 'over') P.overLine(`Jardín: ${n} semilla${n === 1 ? '' : 's'} (${NX.esc(txt)})`);
+    else NX.toast(`Jardín: ${n} semillas nuevas`);
+  }
+
+  // ---------------------------------------------------------------- pantalla
+  NX.css(`.nx-gd-plots{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:6px 0 10px}
+.nx-gd-plot{position:relative;min-height:112px;border-radius:10px;border:2px solid rgba(244,248,255,.2);background:linear-gradient(#6b4a2b,#4a321c);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;cursor:pointer;text-align:center;font-size:12px;color:#fff}
+.nx-gd-plot.empty{background:repeating-linear-gradient(0deg,#5a3d22 0 8px,#4d331c 8px 16px)}
+.nx-gd-plot.ready{border-color:#ffd23f;box-shadow:0 0 0 2px rgba(255,210,63,.35)}
+.nx-gd-plot.target{border-color:#5fe08a;border-style:dashed}
+.nx-gd-plot .nx-pg-bar{width:85%}
+.nx-gd-sprout{font-size:22px;line-height:1}
+.nx-gd-seeds{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.nx-gd-seeds .chip{cursor:pointer}
+.nx-gd-basket{display:flex;flex-wrap:wrap;gap:8px}
+.nx-gd-basket span{display:inline-flex;align-items:center;gap:4px;background:rgba(0,0,0,.25);padding:2px 8px;border-radius:8px;font-size:13px}
+@media (max-width:560px){.nx-gd-plots{grid-template-columns:repeat(2,1fr)}}`);
+  function render(el, h) {
+    const s = load();
+    h.desc(el, 'Siembra las semillas que ganas en las partidas (1 cada 3 minutos y 1 por jefe). Crecen con el tiempo real aunque cierres el juego. Al cosecharlas van a la cesta y la siguiente partida usa una baya de cada tipo.');
+    const seedsBox = document.createElement('div');
+    seedsBox.className = 'nx-gd-seeds';
+    const have = BERRIES.filter((b) => s.seeds[b.id] > 0);
+    if (sel && !(s.seeds[sel] > 0)) sel = '';
+    seedsBox.innerHTML = have.length
+      ? '<span class="nx-note" style="margin:0 4px 0 0">Semillas:</span>' + have.map((b) => `<button type="button" class="chip${sel === b.id ? ' on' : ''}" data-b="${b.id}" title="${NX.esc(b.bonus)} · ${b.grow} min">${berryIco(b, 14)} ${NX.esc(b.name.replace('Baya ', ''))} ×${s.seeds[b.id]}</button>`).join('')
+      : '<span class="nx-note">Sin semillas. Juega una partida de al menos 3 minutos para conseguir.</span>';
+    el.appendChild(seedsBox);
+    seedsBox.querySelectorAll('[data-b]').forEach((b) => b.addEventListener('click', () => { sel = sel === b.dataset.b ? '' : b.dataset.b; h.rerender(); }));
+    if (sel) el.appendChild(NX.ui.note('Toca una parcela vacía para sembrar ' + BY[sel].name + '.'));
+
+    const plots = document.createElement('div');
+    plots.className = 'nx-gd-plots';
+    s.plots.forEach((pl, i) => {
+      const d = document.createElement('div');
+      if (!pl) {
+        d.className = 'nx-gd-plot empty' + (sel ? ' target' : '');
+        d.innerHTML = `<span>Parcela ${i + 1}</span><span class="nx-note" style="margin:0">${sel ? 'Sembrar aquí' : 'Vacía'}</span>`;
+        d.addEventListener('click', () => { if (sel && plant(i, sel)) { NX.toast(BY[sel].name + ' sembrada'); h.rerender(); } else if (!sel) NX.toast('Elige primero una semilla'); });
+      } else {
+        const b = BY[pl.b], ok = ready(pl);
+        const pct = Math.min(100, Math.round(((Date.now() - pl.at) / (b.grow * MIN)) * 100));
+        d.className = 'nx-gd-plot' + (ok ? ' ready' : '');
+        d.innerHTML = `${ok ? berryIco(b, 34) : `<span class="nx-gd-sprout">${pct < 50 ? '🌱' : '🌿'}</span>`}<b>${NX.esc(b.name)}</b>
+          <span>${ok ? 'Lista: toca para cosechar' : 'Faltan ' + fmtLeft(left(pl))}</span><div class="nx-pg-bar"><i style="width:${pct}%"></i></div>`;
+        d.addEventListener('click', () => { if (ok && harvest(i)) { NX.toast(b.name + ' a la cesta'); h.rerender(); } });
+      }
+      plots.appendChild(d);
+    });
+    el.appendChild(plots);
+
+    const bk = BERRIES.filter((b) => s.basket[b.id] > 0);
+    const basket = document.createElement('div');
+    basket.innerHTML = `<p class="nx-note">Cesta (se usa una de cada tipo en la siguiente partida):</p>` + (bk.length
+      ? `<div class="nx-gd-basket">${bk.map((b) => `<span title="${NX.esc(b.bonus)}">${berryIco(b, 16)} ${NX.esc(b.name)} ×${s.basket[b.id]} · ${NX.esc(b.bonus)}</span>`).join('')}</div>`
+      : '<p class="nx-note">Vacía.</p>');
+    el.appendChild(basket);
+    const list = document.createElement('p');
+    list.className = 'nx-note';
+    list.textContent = 'Bayas: ' + BERRIES.map((b) => `${b.name.replace('Baya ', '')} (${b.bonus}, ${b.grow} min)`).join(' · ') + `. Cosechadas en total: ${s.harvested}.`;
+    el.appendChild(list);
+    h.foot(el, [['Cosechar todo', () => { const n = harvestAll(); NX.toast(n ? `${n} baya${n > 1 ? 's' : ''} a la cesta` : 'Nada listo todavía'); h.rerender(); }]]);
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Jardín de bayas',
+    needs: (n) => n.Game && n.Player,
+    setup(n) {
+      ns = n;
+      NX.runs.on('start', (p) => { try { start(p); } catch (err) { NX.trip(KEY, err); } });
+      NX.runs.on('end', (p, how) => { try { end(p, how); } catch (err) { NX.trip(KEY, err); } });
+      P.tab({ key: KEY, title: 'Jardín', order: 2, render });
+      // Refresca la pantalla del jardín mientras está abierta (barras de crecimiento).
+      setInterval(() => {
+        const box = document.querySelector('#nexus-prog:not(.hidden) .nx-gd-plots');
+        if (box && NX.store.get('prog:tab', '') === KEY) P.refresh();
+      }, 15000);
+      // Pruebas y depuración desde la consola: advance(ms) adelanta el reloj de las parcelas.
+      NX.garden = {
+        state: load, seeds: giveSeeds, plant, harvest, harvestAll,
+        advance(ms) { const s = load(); for (const pl of s.plots) if (pl) pl.at -= ms; save(s); P.refresh(); },
+        berries: () => BERRIES.map((b) => b.id),
+      };
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Menús',
+    title: 'Jardín de bayas',
+    keywords: 'jardín bayas semillas sembrar cosechar cesta bonificación progreso',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.toggle('Usar las bayas de la cesta al empezar la partida', 'garden:auto', true));
+      const s = load();
+      el.appendChild(NX.ui.note(`Semillas: ${Object.values(s.seeds).reduce((a, b) => a + b, 0)} · parcelas ocupadas: ${s.plots.filter(Boolean).length}/${PLOTS} · en la cesta: ${Object.values(s.basket).reduce((a, b) => a + b, 0)}.`));
+      el.appendChild(NX.ui.button('Abrir el jardín', () => { if (!P.inMenu()) { NX.toast('Ábrelo desde el menú principal'); return; } NX.togglePanel(); P.open(KEY); }));
+    },
+  });
+})();
+
 // ---- features/hitboxes.js
 // Hitboxes: los círculos de colisión que usa el juego. Jugador (r), aliados,
 // enemigos (r, jefes en naranja) y proyectiles (r). Solo dibujo: se pintan
@@ -6524,6 +7945,978 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   });
 })();
 
+// ---- features/limitbreak.js
+// Límite superado: cuando ya no queda nada que mejorar en la subida de nivel
+// (los 4 movimientos sin más niveles ni evoluciones pendientes, sin huecos
+// para aprender otro y todas las mejoras con tope al máximo), el juego solo
+// repite Vigor, Síntesis y Baya Zidra. En ese caso este módulo cambia la
+// oferta por mejoras pequeñas e infinitas. Envuelve LevelUp.offer (también lo
+// usa el botón de cambiar cartas); cuando no hay límite devuelve la oferta del
+// juego tal cual. Vale en cualquier partida en solitario, también en los
+// modos de Nexus, porque solo cambia cartas que ya no ofrecían nada.
+(() => {
+  const KEY = 'limitbreak';
+  const P = NX.prog;
+  const UNLIMITED = new Set(['hp', 'rgn', 'heal']);
+  const LB = [
+    { id: 'atk', icon: 'fist', title: 'Furia', desc: '+2 % de daño.', apply: (p) => { p.atkMul *= 1.02; } },
+    { id: 'spd', icon: 'boot', title: 'Paso ligero', desc: '+1 % de velocidad.', apply: (p) => { p.spdMul *= 1.01; } },
+    { id: 'hp', icon: 'heart', title: 'Robustez', desc: '+5 de vida máxima (y la recupera).', apply: (p) => p.addMaxHp(5) },
+    { id: 'cd', icon: 'clock', title: 'Concentración', desc: '-1 % de recarga.', apply: (p) => { p.cdMul = Math.max(0.3, p.cdMul * 0.99); } },
+    { id: 'def', icon: 'shield', title: 'Temple', desc: '+0,5 % de reducción de daño.', apply: (p) => { p.dmgReduce = Math.min(0.7, p.dmgReduce + 0.005); } },
+    { id: 'crit', icon: 'star', title: 'Instinto', desc: '+1 % de críticos.', apply: (p) => { p.critChance = Math.min(0.6, (p.critChance || 0) + 0.01); } },
+    { id: 'xp', icon: 'book', title: 'Sabiduría', desc: '+2 % de experiencia.', apply: (p) => { p.xpMul *= 1.02; } },
+    { id: 'rgn', icon: 'sprout', title: 'Raíz', desc: '+0,2 de vida regenerada por segundo.', apply: (p) => { p.regenFlat = (p.regenFlat || 0) + 0.2; } },
+    { id: 'mag', icon: 'magnet', title: 'Atracción', desc: '+3 % de radio de recogida.', apply: (p) => { p.magnet *= 1.03; } },
+  ];
+  let ns = null;
+  const count = new WeakMap(); // jugador -> mejoras de límite tomadas
+
+  // ¿Quedan mejoras de verdad? Mira el jugador, no la oferta (que es al azar).
+  function atLimit(p, offer) {
+    if (!Array.isArray(offer) || !offer.length) return true;
+    if (!offer.every((o) => o && o.type === 'stat' && UNLIMITED.has(String(o.key || '').split(':')[1]))) return false;
+    const M = ns.Moves;
+    for (const m of p.moves || []) {
+      try { if (M.nextUpText(m)) return false; } catch (_) { return false; }
+      try { const e = M.evoInfo(m, p.statsTaken || {}); if (e && !m.evolved) return false; } catch (_) { /* sin evolución */ }
+    }
+    if ((p.slots || []).length < (p.maxMoves || 4)) {
+      const pool = M.poolFor(p.mon).filter((id) => !p.hasMove(id) && !(p.banned && p.banned.has(id)));
+      if (pool.length) return false;
+    }
+    for (const s of ns.LevelUp.STATS || []) if (s.max && ((p.statsTaken || {})[s.id] || 0) < s.max) return false;
+    return true;
+  }
+
+  function cards(p, n) {
+    return P.pickW(LB, n, () => 1).map((d) => ({
+      w: 1, type: 'stat', key: 'lb:' + d.id, icon: d.icon, color: '#ffd23f', tag: 'Límite superado', title: d.title, desc: d.desc,
+      apply: (pl) => {
+        d.apply(pl);
+        count.set(pl, (count.get(pl) || 0) + 1);
+        pl.statsTaken = pl.statsTaken || {};
+        pl.statsTaken['lb_' + d.id] = (pl.statsTaken['lb_' + d.id] || 0) + 1;
+      },
+    }));
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Límite superado',
+    needs: (n) => n.LevelUp && typeof n.LevelUp.offer === 'function' && Array.isArray(n.LevelUp.STATS) && n.Moves &&
+      typeof n.Moves.nextUpText === 'function' && typeof n.Moves.poolFor === 'function' && n.Game,
+    setup(n) {
+      ns = n;
+      const offer = n.LevelUp.offer;
+      n.LevelUp.offer = function (p, k) {
+        const r = offer.apply(this, arguments);
+        if (!NX.isOn(KEY) || !p || p !== n.Game.player || !P.solo()) return r;
+        try {
+          if (atLimit(p, r)) return cards(p, Math.max(3, (Array.isArray(r) && r.length) || +k || 3));
+        } catch (err) { NX.trip(KEY, err); }
+        return r;
+      };
+      P.pill(KEY, () => { const p = n.Game.player; const c = p ? count.get(p) || 0 : 0; return c ? 'Límite ×' + c : ''; });
+      // Pruebas desde la consola.
+      NX.limitbreak = {
+        atLimit: (p) => { p = p || n.Game.player; return atLimit(p, offer.call(n.LevelUp, p)); },
+        taken: (p) => count.get(p || n.Game.player) || 0,
+      };
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Límite superado',
+    keywords: 'límite superado cartas nivel máximo mejoras infinitas progreso',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.note('Cuando ya no queda nada por mejorar en la subida de nivel, ofrece mejoras pequeñas e infinitas (+2 % de daño, +1 % de velocidad, +5 de vida y más) en vez de repetir Vigor, Síntesis y Baya Zidra.'));
+    },
+  });
+})();
+
+// ---- features/maps.js
+// Mapas con forma y mazmorra, como modo de NX.modes ("Mapas").
+//  - Arena: círculo cerrado con World.setArena (radio de 28 tiles o más) y
+//    el tema que elijas.
+//  - Islas: arena con charcos muy altos, que deja islas de suelo entre el agua.
+//  - Mazmorra por salas: salas de arena sucesivas con otro tema en cada una.
+//    Al cumplir la meta de la sala (sobrevivir o derrotar enemigos) se limpia,
+//    eliges una recompensa y aparece un portal hacia la siguiente. La última
+//    sala de cada piso trae un jefe. Récord de salas y pisos.
+// Los enemigos que aparecen o se recolocan fuera del muro vuelven adentro
+// (EnemyMgr.add vía onAdd del modo, Spawner.ahead y un barrido periódico).
+// Los ganchos propios (Spawner.ahead, Events.update, Tiles.runBiome) se
+// instalan una vez y pasan de largo sin una partida de este modo; al terminar
+// se suelta la arena y el motor de modos recorta los jefes añadidos.
+(() => {
+  const KEY = 'maps';
+  const FAR = 1e9;
+  const BEST_KEY = 'maps:best';
+  const ROOM_GAP = 400; // tiles entre salas: cada una genera terreno nuevo
+  const KIND_TXT = { arena: 'Arena', islands: 'Islas', dungeon: 'Mazmorra' };
+  const REWARDS = {
+    heal: { name: 'Curación', note: '50 % de vida', col: '#5fe08a' },
+    card: { name: 'Carta de mejora', note: 'sube un nivel', col: '#ffd23f' },
+    fury: { name: 'Furia', note: '+25 % ataque 90 s', col: '#ff6a4a' },
+    haste: { name: 'Prisa', note: '+20 % velocidad 90 s', col: '#7fe0ff' },
+    coins: { name: 'Bolsa de monedas', note: 'monedas extra', col: '#ffb43f' },
+  };
+
+  let ns = null;
+  const opt = (k, d) => NX.store.get('maps:' + k, d);
+  const mine = () => { const c = NX.modes && NX.modes.ctx && NX.modes.ctx(); return c && c.key === KEY ? c : null; };
+  const best = () => NX.store.get(BEST_KEY, {}) || {};
+  const nowT = () => (ns.Game.st && ns.Game.st.time) || 0;
+  const say = (t, d = 2.4) => { try { ns.Spawner.say(t, d, true); } catch (_) { NX.toast(t); } };
+  const sfx = (n) => { try { ns.Audio.sfx(n); } catch (_) { /* silencio */ } };
+
+  // ---------------------------------------------------------------- temas
+  // Estilo de sala: tipo de arena (forma: charcos, pilares, adornos) y bioma (colores y líquido).
+  function styles(filter) {
+    const T = ns.Tiles, out = [];
+    for (const type of T.ARENA_TYPES) {
+      if (type === 'judgment') continue;
+      const th = T.ARENA_THEMES[type];
+      const bi = T.arenaBiome(type);
+      const b = T.BIOMES[bi];
+      if (!th || !b) continue;
+      out.push({ id: type, name: th.name || type, type, biome: bi, liquid: b.liquid });
+    }
+    const B = NX.biomes;
+    if (B && B.active()) {
+      for (const n of B.names()) {
+        const d = B.def(n), i = B.index(n);
+        if (d && i >= 0 && T.ARENA_THEMES[d.theme]) out.push({ id: 'nx:' + n, name: n, type: d.theme, biome: i, liquid: d.liquid, nx: true });
+      }
+    }
+    return filter ? out.filter(filter) : out;
+  }
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  function themeFor(type, over) {
+    const T = ns.Tiles;
+    const base = T.ARENA_THEMES[type] || T.ARENA_THEMES.normal;
+    return Object.assign(JSON.parse(JSON.stringify(base)), over || {});
+  }
+
+  // ---------------------------------------------------------------- arena
+  const TS = () => ns.World.TS || 32;
+  function freeAt(x, y, r = 14) {
+    const W = ns.World;
+    return W.kindAt(x, y) === 'floor' && (!W.isFree || W.isFree(x, y, r));
+  }
+  // Suelo libre más cercano a (x, y), en espiral.
+  function findFloor(x, y, maxTiles = 12) {
+    const s = TS();
+    if (freeAt(x, y, 16)) return [x, y];
+    for (let d = 1; d <= maxTiles; d++) {
+      for (let k = 0; k < 8 * d; k++) {
+        const a = (k / (8 * d)) * Math.PI * 2;
+        const px = x + Math.cos(a) * d * s, py = y + Math.sin(a) * d * s;
+        if (freeAt(px, py, 16)) return [px, py];
+      }
+    }
+    return null;
+  }
+
+  function openArena(c, style, r, over) {
+    const W = ns.World, s = TS();
+    c.roomN = (c.roomN || 0) + 1;
+    const tx = c.baseTx + (c.roomN - 1) * ROOM_GAP, ty = c.baseTy;
+    const a = { tx, ty, r, type: style.type };
+    W.setArena(a);
+    a.th = themeFor(style.type, over); // setArena deja el tema en a.th: se sustituye antes de generar terreno
+    c.arena = a;
+    c.cx = tx * s + s / 2;
+    c.cy = ty * s + s / 2;
+    c.R = r * s;
+    c.style = style;
+    c.biomeLock = style.biome;
+    W.setBiome(style.biome, true);
+    const at = findFloor(c.cx, c.cy + 3 * s) || findFloor(c.cx, c.cy, r - 2) || [c.cx, c.cy];
+    const all = typeof ns.Game.everyone === 'function' ? ns.Game.everyone() : [ns.Game.player];
+    all.forEach((pl, i) => { pl.x = at[0] + 34 * (i - (all.length - 1) / 2); pl.y = at[1]; });
+    ns.Camera.x = at[0];
+    ns.Camera.y = at[1];
+    const wx = a.th && a.th.weather;
+    try { if (ns.Weather && ns.Weather.clear) ns.Weather.clear(); if (wx && opt('weather', true)) ns.Weather.force(wx, 135); } catch (_) { /* nada */ }
+  }
+
+  const outside = (c, e, margin = 1.5) => Math.hypot(e.x - c.cx, e.y - c.cy) > c.R - margin * TS();
+  // Recoloca un enemigo dentro del muro, lejos del jugador.
+  function relocate(c, e) {
+    const W = ns.World, p = c.player, s = TS();
+    const minD = Math.min(260, c.R * 0.45);
+    for (let i = 0; i < 16; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = c.R * (0.25 + 0.65 * Math.sqrt(Math.random())) - s;
+      const x = c.cx + Math.cos(a) * rr, y = c.cy + Math.sin(a) * rr;
+      if (p && Math.hypot(x - p.x, y - p.y) < minD) continue;
+      const k = W.kindAt(x, y);
+      if (k === 'wall' || (k === 'liquid' && !e.flying)) continue;
+      if (W.isFree && !W.isFree(x, y, Math.min(20, e.r || 12), !!e.flying)) continue;
+      e.x = x; e.y = y;
+      e.kx = e.ky = 0;
+      if ('jump' in e) e.jump = null;
+      if ('jumpLift' in e) e.jumpLift = 0;
+      return true;
+    }
+    return false;
+  }
+
+  // ---------------------------------------------------------------- mazmorra
+  function roomGoal(c) {
+    const f = c.floor - 1, r = c.room;
+    return { time: 35 + 5 * r + 5 * f, kills: 14 + 6 * r + 6 * f };
+  }
+  const bossRoom = (c) => c.room >= c.rooms;
+
+  function scheduleBoss(c) {
+    const B = ns.Enemies.BOSSES, L = c.bossList;
+    if (!Array.isArray(B) || !L || !L.length) return;
+    const i = Math.min(c.floor - 1, L.length - 1);
+    const extra = c.floor > L.length ? 1 + 0.6 * (c.floor - L.length) : 1;
+    const b = Object.assign({}, L[i], { at: nowT() + 3 });
+    b.hp = Math.round(b.hp * extra);
+    b.dmg = Math.round(b.dmg * Math.sqrt(extra));
+    const k = c.bossSpawned;
+    while (B.length < k) B.push(Object.assign({}, L[L.length - 1], { at: 0, nxDone: true })); // huecos ya superados
+    B[k] = b;
+    c.bossName = b.name || '';
+    try { ns.Sprites.preload([b.dex]); } catch (_) { /* nada */ }
+  }
+
+  function openRoom(c) {
+    try { ns.EnemyMgr.clear(); } catch (_) { /* nada */ }
+    try { ns.Projectiles.clear(); } catch (_) { /* nada */ }
+    try { if (ns.Hazards) ns.Hazards.clear(); } catch (_) { /* nada */ }
+    try { if (ns.Combat && ns.Combat.clearFields) ns.Combat.clearFields(); } catch (_) { /* nada */ }
+    try { ns.Pickups.clear(); } catch (_) { /* nada */ }
+    try { if (NX.terrains) NX.terrains.clear(); if (NX.mapPickups) NX.mapPickups.clear(); } catch (_) { /* nada */ }
+    const pool = styles((st) => st.id !== (c.style && c.style.id) && st.liquid !== 'lava');
+    const lava = styles((st) => st.id !== (c.style && c.style.id));
+    // Lava solo de vez en cuando: daña al pisarla.
+    const style = Math.random() < 0.2 ? pick(lava) : pick(pool.length ? pool : lava);
+    const boss = bossRoom(c);
+    openArena(c, style, boss ? 30 : 24);
+    c.phase = 'fight';
+    c.roomT0 = nowT();
+    c.kills0 = c.player.kills || 0;
+    c.rewards = null;
+    c.portal = null;
+    c.boss = null;
+    c.noSpawner = false;
+    c.spawnK = boss ? 0.35 : 1 + 0.12 * (c.floor - 1);
+    if (boss) scheduleBoss(c);
+    say(`Piso ${c.floor} · Sala ${c.room}/${c.rooms} · ${style.name}${boss ? ' · ¡Jefe!' : ''}`, 2.6);
+    sfx('rift');
+  }
+
+  function roomCleared(c) {
+    c.phase = 'reward';
+    c.noSpawner = true;
+    c.cleared++;
+    const p = c.player;
+    // Lo que queda en la sala cae de una vez y la experiencia viene sola.
+    for (const e of ns.EnemyMgr.all()) {
+      if (e.dead || e.arceus || e.remote) continue;
+      try { e.hurt((e.maxHp || 100) * 4 + (e.shield || 0) + 50, 'normal', e.x - p.x, e.y - p.y, 120); } catch (_) { /* nada */ }
+    }
+    setTimeout(() => { try { if (mine() === c) ns.Pickups.pullAll(); } catch (_) { /* nada */ } }, 300);
+    try { ns.FX.ring(p.x, p.y, 10, 600, '#ffd23f', 0.7, 5); } catch (_) { /* nada */ }
+    sfx('legend');
+    const keys = Object.keys(REWARDS).sort(() => Math.random() - 0.5);
+    let three = keys.slice(0, 3);
+    if (p.hp < p.maxHp * 0.5 && !three.includes('heal')) three = ['heal', ...three.slice(0, 2)];
+    const s = TS();
+    c.rewards = three.map((k, i) => {
+      const a = Math.PI / 2 + (i - 1) * 0.9;
+      const at = findFloor(p.x + Math.cos(a) * 3.4 * s, p.y + Math.sin(a) * 3.4 * s, 5) || [p.x + (i - 1) * 60, p.y - 90];
+      return { kind: k, x: at[0], y: at[1] };
+    });
+    say(bossRoom(c) ? `¡Piso ${c.floor} superado! Elige una recompensa` : '¡Sala superada! Elige una recompensa', 2.8);
+  }
+
+  function takeReward(c, rw) {
+    const p = c.player;
+    if (rw.kind === 'heal') { try { p.heal(p.maxHp * 0.5); } catch (_) { /* nada */ } }
+    else if (rw.kind === 'card') { try { ns.Game.debugLevelUp(); } catch (_) { /* nada */ } }
+    else if (rw.kind === 'fury') { try { p.addBuff('atk', 0.25, 90, 1); } catch (_) { /* nada */ } }
+    else if (rw.kind === 'haste') { try { p.addBuff('spd', 0.2, 90, 1); } catch (_) { /* nada */ } }
+    else if (rw.kind === 'coins') { p.coins = (p.coins || 0) + 15 + 10 * c.floor; }
+    sfx('confirm');
+    NX.toast('Recompensa: ' + REWARDS[rw.kind].name);
+    c.rewards = null;
+    c.phase = 'portal';
+    const at = findFloor(c.cx, c.cy, 10) || findFloor(p.x, p.y - 4 * TS(), 6) || [p.x, p.y - 120];
+    if (Math.hypot(at[0] - p.x, at[1] - p.y) < 90) {
+      const alt = findFloor(p.x, p.y - 4 * TS(), 6);
+      if (alt) { at[0] = alt[0]; at[1] = alt[1]; }
+    }
+    c.portal = { x: at[0], y: at[1], t0: performance.now() };
+    say('Se abrió un portal: entra para seguir', 2.2);
+  }
+
+  function enterPortal(c) {
+    c.portal = null;
+    if (bossRoom(c)) {
+      c.floor++;
+      c.room = 1;
+    } else c.room++;
+    openRoom(c);
+  }
+
+  function dungeonTick(c, p) {
+    const t = nowT();
+    if (c.phase === 'fight') {
+      if (bossRoom(c)) {
+        if (c.boss && (c.boss.dead || !ns.EnemyMgr.all().includes(c.boss))) roomCleared(c);
+        return;
+      }
+      const g = roomGoal(c);
+      const kills = (p.kills || 0) - c.kills0;
+      if (t - c.roomT0 >= g.time || kills >= g.kills) roomCleared(c);
+    } else if (c.phase === 'reward' && c.rewards && !p.dead) {
+      for (const rw of c.rewards) {
+        if (Math.hypot(p.x - rw.x, p.y - rw.y) <= (p.r || 14) + 18) { takeReward(c, rw); break; }
+      }
+    } else if (c.phase === 'portal' && c.portal && !p.dead && ns.Game.state === 'playing') {
+      if (Math.hypot(p.x - c.portal.x, p.y - c.portal.y) <= (p.r || 14) + 20) enterPortal(c);
+    }
+  }
+
+  // ---------------------------------------------------------------- configuración de partida
+  function cfg(kind) {
+    const s = { key: KEY, label: KIND_TXT[kind] || 'Mapas', tags: [], mapKind: kind, noRift: true, noJudge: true, noEvents: true };
+    s.onStart = (n, p, c) => {
+      const T = TS();
+      c.player = p;
+      c.baseTx = Math.floor(p.x / T);
+      c.baseTy = Math.floor(p.y / T);
+      c.cleared = 0;
+      if (kind === 'arena') {
+        const sel = String(opt('theme', 'random'));
+        const all = styles((st) => st.liquid !== 'lava');
+        const st = styles().find((x) => x.id === sel) || pick(all);
+        const r = NX.clamp(+opt('r', 32) || 32, 28, 44);
+        openArena(c, st, r);
+        c.tags = [st.name];
+      } else if (kind === 'islands') {
+        // Temas de agua clara, para que las islas se lean bien.
+        const CLEAR = ['water', 'normal', 'grass', 'flying', 'fairy', 'psychic', 'bug', 'nx:Torre Fantasma'];
+        const wet = styles((st) => st.liquid === 'water' && CLEAR.includes(st.id));
+        const st = pick(wet.length ? wet : styles());
+        const r = NX.clamp(+opt('ir', 36) || 36, 30, 48);
+        openArena(c, st, r, { pools: 0.55, pillars: 0.008, props: { tree: 0.02, grass: 0.04 } });
+        c.tags = [st.name];
+      } else {
+        c.floor = 1;
+        c.room = 1;
+        c.rooms = NX.clamp(+opt('rooms', 4) || 4, 3, 6);
+        c.bossSpawned = 0;
+        const B = ns.Enemies.BOSSES;
+        c.bossList = Array.isArray(B) ? B.map((b) => Object.assign({}, b)) : [];
+        if (Array.isArray(B)) B.length = 0; // los jefes solo salen en la última sala (la lista es de esta partida)
+        c.bossLen0 = 0;
+        openRoom(c);
+      }
+    };
+    s.onAdd = (e, n, c) => {
+      if (c.arena && outside(c, e, 1)) relocate(c, e);
+      if (c.mapKind === 'dungeon' && e.boss && !e.legend && !e.arceus && !e.nxDummy) {
+        c.bossSpawned++;
+        if (bossRoom(c) && c.phase === 'fight') c.boss = e;
+      }
+    };
+    s.onTick = (n, p, c) => {
+      if (!c.arena) return;
+      for (const e of ns.EnemyMgr.all()) if (!e.dead && outside(c, e, 0.5)) relocate(c, e);
+      if (c.mapKind === 'dungeon') dungeonTick(c, p);
+    };
+    s.pillExtra = (n, c) => {
+      if (c.mapKind !== 'dungeon') return '';
+      const head = `Piso ${c.floor} · Sala ${c.room}/${c.rooms}`;
+      if (c.phase === 'reward') return head + ' · Elige recompensa';
+      if (c.phase === 'portal') return head + ' · Entra al portal';
+      if (bossRoom(c)) return head + ' · Jefe' + (c.bossName ? ': ' + c.bossName : '');
+      const g = roomGoal(c);
+      const left = Math.max(0, g.time - (nowT() - c.roomT0));
+      const kills = Math.max(0, (c.player.kills || 0) - c.kills0);
+      return `${head} · ${NX.fmtTime(left)} o ${kills}/${g.kills} bajas`;
+    };
+    s.onEnd = (n, p, c, info) => {
+      try { if (ns.World.arena === c.arena) ns.World.setArena(null); } catch (_) { /* nada */ }
+      c.rewards = null;
+      c.portal = null;
+      const b = best();
+      let line = `<b>${NX.esc(KIND_TXT[kind])}</b> · fuera del ranking`;
+      if (kind === 'dungeon') {
+        const prev = b.dungeon;
+        const beat = !prev || c.cleared > prev.rooms;
+        if (beat && c.cleared > 0) { b.dungeon = { rooms: c.cleared, floor: c.floor, room: c.room, time: info.time, mon: info.mon, at: Date.now() }; NX.store.set(BEST_KEY, b); }
+        line += `<br>Piso ${c.floor}, sala ${c.room} · ${c.cleared} salas superadas` +
+          (beat && c.cleared > 0 ? ' · <b style="color:#ffe27a">¡Nuevo récord!</b>' : prev ? ` · récord ${prev.rooms} salas` : '');
+      } else {
+        const prev = b[kind];
+        const beat = !prev || info.time > prev.time;
+        if (beat) { b[kind] = { time: info.time, level: info.level, mon: info.mon, at: Date.now() }; NX.store.set(BEST_KEY, b); }
+        line += `<br>Sobreviviste ${NX.fmtTime(info.time)}` + (beat ? ' · <b style="color:#ffe27a">¡Nuevo récord!</b>' : ` · récord ${NX.fmtTime(prev.time)}`);
+      }
+      return line;
+    };
+    return s;
+  }
+
+  // ---------------------------------------------------------------- dibujo
+  const PORTAL = ['#2a1458', '#5b2fd0', '#8a5cf0', '#c9b8ff', '#ffffff'];
+  function drawReward(g, rw, S, ms, i) {
+    const R = REWARDS[rw.kind];
+    const [x, y] = NX.toScreen(rw.x, rw.y);
+    const bob = Math.sin(ms / 260 + i) * 3 * S;
+    const u = Math.max(2, Math.round(2 * S));
+    g.fillStyle = 'rgba(0,0,0,.3)';
+    g.beginPath(); g.ellipse(x, y + 4 * S, 12 * S, 4 * S, 0, 0, Math.PI * 2); g.fill();
+    // Pedestal y gema pixelada.
+    g.fillStyle = '#0b1838'; g.fillRect(Math.round(x - 7 * u), Math.round(y - u), 14 * u, 3 * u);
+    g.fillStyle = '#8a93b8'; g.fillRect(Math.round(x - 6 * u), Math.round(y - u + 1), 12 * u, 2 * u - 1);
+    const cy = Math.round(y - 9 * S + bob);
+    g.globalAlpha = 0.35 + 0.2 * Math.sin(ms / 200 + i);
+    g.fillStyle = R.col; g.beginPath(); g.arc(x, cy, 12 * S, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = 1;
+    const gem = ['..x..', '.xXx.', 'xXXXx', '.xXx.', '..x..'];
+    for (let j = 0; j < 5; j++) for (let k = 0; k < 5; k++) {
+      const ch = gem[j][k];
+      if (ch === '.') continue;
+      g.fillStyle = '#0b1838'; g.fillRect(Math.round(x + (k - 2.5) * u) - 1, cy + (j - 2.5) * u - 1, u + 2, u + 2);
+    }
+    for (let j = 0; j < 5; j++) for (let k = 0; k < 5; k++) {
+      const ch = gem[j][k];
+      if (ch === '.') continue;
+      g.fillStyle = ch === 'X' ? R.col : '#ffffff';
+      g.fillRect(Math.round(x + (k - 2.5) * u), cy + (j - 2.5) * u, u, u);
+    }
+    g.font = `${Math.round(12 * Math.min(1.35, S))}px Pixelify, system-ui, sans-serif`;
+    g.textAlign = 'center';
+    g.lineWidth = 3; g.strokeStyle = '#0b1838';
+    g.strokeText(R.name, x, cy - 16 * S); g.fillStyle = R.col; g.fillText(R.name, x, cy - 16 * S);
+    g.font = `${Math.round(10 * Math.min(1.35, S))}px Pixelify, system-ui, sans-serif`;
+    g.strokeText(R.note, x, y + 16 * S); g.fillStyle = '#ffffff'; g.fillText(R.note, x, y + 16 * S);
+  }
+  function drawPortal(g, pt, S, ms) {
+    const [x, y] = NX.toScreen(pt.x, pt.y);
+    const grow = Math.min(1, (ms - pt.t0) / 500);
+    const u = Math.max(2, Math.round(2 * S));
+    const rx = 22 * S * grow, ry = 30 * S * grow;
+    for (let k = PORTAL.length - 1; k >= 0; k--) {
+      const f = (k + 1) / PORTAL.length;
+      g.fillStyle = PORTAL[PORTAL.length - 1 - k];
+      const w = Math.round(rx * f), h = Math.round(ry * f);
+      for (let yy = -h; yy <= h; yy += u) {
+        const half = Math.round(w * Math.sqrt(Math.max(0, 1 - (yy * yy) / (h * h || 1))) / u) * u;
+        g.fillRect(Math.round(x - half), Math.round(y - ry + yy), half * 2, u);
+      }
+    }
+    // Chispas que giran.
+    for (let i = 0; i < 6; i++) {
+      const a = ms / 400 + (i * Math.PI) / 3;
+      g.fillStyle = i % 2 ? '#ffd23f' : '#ffffff';
+      g.fillRect(Math.round(x + Math.cos(a) * rx * 1.15), Math.round(y - ry + Math.sin(a) * ry * 1.15), u, u);
+    }
+    g.font = `${Math.round(12 * Math.min(1.35, S))}px Pixelify, system-ui, sans-serif`;
+    g.textAlign = 'center';
+    g.lineWidth = 3; g.strokeStyle = '#0b1838';
+    g.strokeText('Portal', x, y - ry * 2 - 6); g.fillStyle = '#d9c8ff'; g.fillText('Portal', x, y - ry * 2 - 6);
+  }
+  function edgeArrow(g, sx, sy, w, h, col) {
+    const cx = w / 2, cy = h / 2, dx = sx - cx, dy = sy - cy;
+    const k = Math.min((w / 2 - 30) / Math.abs(dx || 1e-6), (h / 2 - 30) / Math.abs(dy || 1e-6));
+    g.save();
+    g.translate(Math.round(cx + dx * k), Math.round(cy + dy * k));
+    g.rotate(Math.atan2(dy, dx));
+    g.fillStyle = '#0b1838';
+    g.beginPath(); g.moveTo(13, 0); g.lineTo(-8, -10); g.lineTo(-8, 10); g.closePath(); g.fill();
+    g.fillStyle = col;
+    g.beginPath(); g.moveTo(9, 0); g.lineTo(-5, -7); g.lineTo(-5, 7); g.closePath(); g.fill();
+    g.restore();
+  }
+  function draw(g, w, h) {
+    const c = mine();
+    if (!c || c.mapKind !== 'dungeon' || !NX.inRun()) return;
+    const S = ns.Camera.scale || 1, ms = performance.now();
+    const off = (x, y) => x < -30 || y < -30 || x > w + 30 || y > h + 30;
+    if (c.rewards) c.rewards.forEach((rw, i) => drawReward(g, rw, S, ms, i));
+    if (c.portal) {
+      const [x, y] = NX.toScreen(c.portal.x, c.portal.y);
+      if (off(x, y)) edgeArrow(g, x, y, w, h, '#8a5cf0'); else drawPortal(g, c.portal, S, ms);
+    }
+  }
+
+  NX.mapMarkers = NX.mapMarkers || [];
+  NX.mapMarkers.push({
+    key: KEY,
+    list: () => {
+      const c = mine();
+      if (!c || c.mapKind !== 'dungeon') return [];
+      const out = [];
+      if (c.portal) out.push({ x: c.portal.x, y: c.portal.y, color: '#8a5cf0', shape: 'portal', label: 'Portal' });
+      if (c.rewards) for (const rw of c.rewards) out.push({ x: rw.x, y: rw.y, color: REWARDS[rw.kind].col, shape: 'item', label: REWARDS[rw.kind].name });
+      return out;
+    },
+  });
+
+  // ---------------------------------------------------------------- ganchos
+  function hook() {
+    const SP = ns.Spawner, T = ns.Tiles, EV = ns.Events;
+    const ahead = SP.ahead;
+    SP.ahead = function (e) {
+      const r = ahead.apply(this, arguments);
+      const c = mine();
+      if (r && c && c.arena && e && outside(c, e, 1)) return relocate(c, e);
+      return r;
+    };
+    const rb = T.runBiome;
+    T.runBiome = function () {
+      const c = mine();
+      if (c && c.biomeLock != null) return c.biomeLock;
+      return rb.apply(this, arguments);
+    };
+    if (EV && typeof EV.update === 'function') {
+      const eu = EV.update;
+      EV.update = function () {
+        const c = mine();
+        if (c && c.noEvents) return undefined;
+        return eu.apply(this, arguments);
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------- selector
+  function records(el, h) {
+    const b = best();
+    const items = [
+      ['Arena', b.arena ? NX.fmtTime(b.arena.time) + (b.arena.mon ? ' · ' + b.arena.mon : '') : '·'],
+      ['Islas', b.islands ? NX.fmtTime(b.islands.time) + (b.islands.mon ? ' · ' + b.islands.mon : '') : '·'],
+      ['Mazmorra', b.dungeon ? `${b.dungeon.rooms} salas · piso ${b.dungeon.floor}` : '·'],
+    ];
+    if (h) h.cards(el, items);
+    else el.appendChild(NX.ui.note(items.map(([k, v]) => k + ': ' + v).join(' · ')));
+  }
+
+  function render(el, h) {
+    const kind = String(opt('kind', 'arena'));
+    h.desc(el, 'Mapas con forma: una arena cerrada, un archipiélago de islas o una mazmorra de salas con portal, recompensas y jefe al final de cada piso. Sin grietas, sin Juicio y fuera del ranking.');
+    records(el, h);
+    el.appendChild(NX.ui.select('Mapa', 'maps:kind', [['arena', 'Arena'], ['islands', 'Islas'], ['dungeon', 'Mazmorra por salas']], 'arena', () => h.rerender()));
+    if (kind === 'arena') {
+      const list = styles((st) => st.liquid !== 'lava');
+      el.appendChild(NX.ui.select('Tema', 'maps:theme', [['random', 'Al azar'], ...styles().map((st) => [st.id, st.name])], 'random'));
+      el.appendChild(NX.ui.range('Radio', 'maps:r', 28, 44, 1, 32, (v) => v + ' tiles'));
+      el.appendChild(NX.ui.note(`Círculo cerrado por un muro. ${list.length} temas disponibles; los enemigos siempre aparecen dentro.`));
+    } else if (kind === 'islands') {
+      el.appendChild(NX.ui.range('Radio', 'maps:ir', 30, 48, 1, 36, (v) => v + ' tiles'));
+      el.appendChild(NX.ui.note('Arena llena de agua con islas de suelo. El agua te frena: elige bien por dónde cruzar.'));
+    } else {
+      el.appendChild(NX.ui.range('Salas por piso (la última con jefe)', 'maps:rooms', 3, 6, 1, 4, (v) => String(v)));
+      el.appendChild(NX.ui.note('Cada sala tiene una meta: sobrevivir el tiempo o derrotar a cierto número de enemigos. Al cumplirla eliges una recompensa y aparece el portal.'));
+    }
+    el.appendChild(NX.ui.toggle('Clima del tema', 'maps:weather', true));
+    h.foot(el, 'Jugar ' + (KIND_TXT[kind] || 'Mapa'), () => NX.modes.launch(cfg(kind)));
+  }
+
+  NX.maps = {
+    // Atajos de prueba desde la consola: NX.maps.launch('dungeon').
+    launch: (kind) => NX.modes.launch(cfg(kind)),
+    ctx: () => mine(),
+    clearRoom: () => { const c = mine(); if (c && c.mapKind === 'dungeon' && c.phase === 'fight') roomCleared(c); },
+  };
+
+  NX.hudLayers.push({ key: KEY, under: draw });
+
+  NX.feature({
+    key: KEY,
+    label: 'Mapas con forma',
+    needs: (n) => !!NX.modes && n.World && typeof n.World.setArena === 'function' && typeof n.World.kindAt === 'function' &&
+      n.Tiles && n.Tiles.ARENA_THEMES && Array.isArray(n.Tiles.ARENA_TYPES) && typeof n.Tiles.arenaBiome === 'function' &&
+      n.Spawner && typeof n.Spawner.ahead === 'function' && n.EnemyMgr && typeof n.EnemyMgr.clear === 'function' &&
+      n.Enemies && Array.isArray(n.Enemies.BOSSES) && n.Camera && typeof n.Game.debugLevelUp === 'function',
+    setup(n) {
+      ns = n;
+      hook();
+      NX.modes.register({ key: KEY, title: 'Mapas', order: 6, render });
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Modos',
+    title: 'Mapas con forma y mazmorra',
+    keywords: 'mapas arena islas mazmorra salas portal jefe piso récord',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.note('Añade la pestaña Mapas en Modos Nexus: Arena, Islas y Mazmorra por salas.'));
+      records(el, null);
+      el.appendChild(NX.ui.button('Abrir Mapas', () => {
+        if (!NX.modes || !NX.modes.canPlay()) { NX.toast('Abre los modos desde el menú principal'); return; }
+        NX.togglePanel();
+        NX.modes.open(KEY);
+      }));
+      el.appendChild(NX.ui.button('Borrar récords', () => { NX.store.set(BEST_KEY, {}); NX.toast('Récords de mapas borrados'); }));
+    },
+  });
+})();
+
+// ---- features/mega.js
+// Megaevolución. Con una Megapiedra en la partida y un Pokémon que tenga mega,
+// el daño hecho carga una barra; al llenarse, la tecla G, el botón MEGA del HUD
+// o su toque lo transforman durante unos segundos: sprite mega, estadísticas
+// de la mega (las de la serie, por proporción sobre las del juego), tipos de
+// la mega, aura y efecto de transformación. Al terminar vuelve a su forma.
+//
+// Megapiedra: la sueltan los jefes (probabilidad ajustable), a veces sale de
+// un objeto de cofre, la da la raid legendaria (raids.js), aparece a veces en
+// la tienda entre oleadas (shop.js, NX.shop.addOffer) y se guarda en reserva
+// para otra partida si sale sin un Pokémon compatible (NX.megaApi.addStock).
+//
+// Sprites: la edición trae las formas de SpriteCollab en assets/pokemon/<clave>/
+// y su SPRITE_META en nexus/megas.json (scripts/fetch-megas.mjs). Sin esos
+// archivos (laboratorio) usa el sprite normal agrandado, o se desactiva si
+// así se elige en los ajustes.
+(() => {
+  const KEY = 'mega';
+  const S_DUR = 'pkm:mega:dur', S_BOSS = 'pkm:mega:boss', S_CHEST = 'pkm:mega:chest', S_START = 'pkm:mega:start';
+  const S_FALL = 'pkm:mega:fallback', S_USES = 'pkm:mega:uses', S_STOCK = 'pkm:mega:stock';
+  // dex -> [clave, nombre, tipos, base [PS, Atq, Def, AtE, DfE, Vel], mega]
+  const TABLE = {
+    6: ['6mx', 'Mega-Charizard X', ['fire', 'dragon'], [78, 84, 78, 109, 85, 100], [78, 130, 111, 130, 85, 100]],
+    65: ['65m', 'Mega-Alakazam', ['psychic'], [55, 50, 45, 135, 95, 120], [55, 50, 65, 175, 105, 150]],
+    94: ['94m', 'Mega-Gengar', ['ghost', 'poison'], [60, 65, 60, 130, 75, 110], [60, 65, 80, 170, 95, 130]],
+    115: ['115m', 'Mega-Kangaskhan', ['normal'], [105, 95, 80, 40, 80, 90], [105, 125, 100, 60, 100, 100]],
+    142: ['142m', 'Mega-Aerodactyl', ['rock', 'flying'], [80, 105, 65, 60, 75, 130], [80, 135, 85, 70, 95, 150]],
+    150: ['150my', 'Mega-Mewtwo Y', ['psychic'], [106, 110, 90, 154, 90, 130], [106, 150, 70, 194, 120, 140]],
+    208: ['208m', 'Mega-Steelix', ['steel', 'ground'], [75, 85, 200, 55, 65, 30], [75, 125, 230, 55, 95, 30]],
+    229: ['229m', 'Mega-Houndoom', ['dark', 'fire'], [75, 90, 50, 110, 80, 95], [75, 90, 90, 140, 90, 115]],
+    248: ['248m', 'Mega-Tyranitar', ['rock', 'dark'], [100, 134, 110, 95, 100, 61], [100, 164, 150, 95, 120, 71]],
+    282: ['282m', 'Mega-Gardevoir', ['psychic', 'fairy'], [68, 65, 65, 125, 115, 80], [68, 85, 65, 165, 135, 100]],
+    302: ['302m', 'Mega-Sableye', ['dark', 'ghost'], [50, 75, 75, 65, 65, 50], [50, 85, 125, 85, 115, 20]],
+    303: ['303m', 'Mega-Mawile', ['steel', 'fairy'], [50, 85, 85, 55, 55, 50], [50, 105, 125, 55, 95, 50]],
+    308: ['308m', 'Mega-Medicham', ['fighting', 'psychic'], [60, 60, 75, 60, 75, 80], [60, 100, 85, 80, 85, 100]],
+    310: ['310m', 'Mega-Manectric', ['electric'], [70, 75, 60, 105, 60, 105], [70, 75, 80, 135, 80, 135]],
+    323: ['323m', 'Mega-Camerupt', ['fire', 'ground'], [70, 100, 70, 105, 75, 40], [70, 120, 100, 145, 105, 20]],
+    334: ['334m', 'Mega-Altaria', ['dragon', 'fairy'], [75, 70, 90, 70, 105, 80], [75, 110, 110, 110, 105, 80]],
+    354: ['354m', 'Mega-Banette', ['ghost'], [64, 115, 65, 83, 63, 65], [64, 165, 75, 93, 83, 75]],
+    359: ['359m', 'Mega-Absol', ['dark'], [65, 130, 60, 75, 60, 75], [65, 150, 60, 115, 60, 115]],
+    362: ['362m', 'Mega-Glalie', ['ice'], [80, 80, 80, 80, 80, 80], [80, 120, 80, 120, 80, 100]],
+    380: ['380m', 'Mega-Latias', ['dragon', 'psychic'], [80, 80, 90, 110, 130, 110], [80, 100, 120, 140, 150, 110]],
+    381: ['381m', 'Mega-Latios', ['dragon', 'psychic'], [80, 90, 80, 130, 110, 110], [80, 130, 100, 160, 120, 110]],
+    384: ['384m', 'Mega-Rayquaza', ['dragon', 'flying'], [105, 150, 90, 150, 90, 95], [105, 180, 100, 180, 100, 115]],
+    428: ['428m', 'Mega-Lopunny', ['normal', 'fighting'], [65, 76, 84, 54, 96, 105], [65, 136, 94, 54, 96, 135]],
+    448: ['448m', 'Mega-Lucario', ['fighting', 'steel'], [70, 110, 70, 115, 70, 90], [70, 145, 88, 140, 70, 112]],
+    475: ['475m', 'Mega-Gallade', ['psychic', 'fighting'], [68, 125, 65, 65, 115, 80], [68, 165, 95, 65, 115, 110]],
+  };
+  const COLORS = ['#b678ff', '#ff7ad9', '#ffb347', '#6fe3ff'];
+  let ns = null, pm = null;
+  let sprites = null; // null: cargando · true: hay sprites mega · false: no hay
+  let spriteKeys = new Set();
+  let run = null;
+
+  const megaOf = (dex) => TABLE[dex] || null;
+  const fallbackOn = () => NX.store.get(S_FALL, true) !== false;
+  // ¿Este Pokémon puede megaevolucionar en esta edición?
+  const canMega = (dex) => {
+    const m = megaOf(dex);
+    if (!m) return false;
+    if (spriteKeys.has(m[0])) return true;
+    return sprites !== null && fallbackOn();
+  };
+  const stock = () => Math.max(0, NX.store.get(S_STOCK, 0) | 0);
+  const addStock = (n) => NX.store.set(S_STOCK, stock() + (n | 0));
+
+  // ---------------------------------------------------------------- sprites de la edición
+  function assetBase() {
+    const s = document.querySelector('script[src*="js/app.min.js"]');
+    return s && s.src ? s.src.replace(/js\/app\.min\.js.*$/, '') : location.origin + '/';
+  }
+  async function loadSprites() {
+    try {
+      const res = await fetch(assetBase() + 'nexus/megas.json', { cache: 'no-cache' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const j = await res.json();
+      const META = ns.SPRITE_META;
+      for (const m of Object.values((j && j.megas) || {})) {
+        if (!m || !m.key || !m.meta || !m.meta.a || !m.meta.a.Idle) continue;
+        const baseMeta = META[m.dex] || {};
+        META[m.key] = Object.assign({}, m.meta, baseMeta.hv ? { hv: 1 } : {});
+        spriteKeys.add(m.key);
+        if (!TABLE[m.dex] && Array.isArray(m.base) && Array.isArray(m.mega)) TABLE[m.dex] = [m.key, m.name, m.types || [], m.base, m.mega];
+      }
+      sprites = spriteKeys.size > 0;
+    } catch (_) {
+      sprites = false;
+    }
+  }
+
+  // ---------------------------------------------------------------- Megapiedra
+  function grant(reason) {
+    if (!run || !NX.isOn(KEY)) { addStock(1); return; }
+    const p = run.p;
+    if (run.stone || !p || !canMega(p.dex)) {
+      addStock(1);
+      NX.toast(`Megapiedra guardada en la reserva (${stock()})`);
+      return;
+    }
+    run.stone = true;
+    run.charge.reset();
+    pm.sfx('shinyGet');
+    try {
+      ns.FX.ring(p.x, p.y, 6, 60, '#ff7ad9', 0.6, 4);
+      ns.FX.burst(p.x, p.y - p.bodyH * 0.5, '#ffb347', 18, 120);
+    } catch (_) { /* sin efectos */ }
+    pm.say('¡Obtuviste una Megapiedra!' + (reason ? ' (' + reason + ')' : ''), 3);
+  }
+
+  // Tienda entre oleadas (shop.js): la Megapiedra es una oferta rara que solo
+  // sale si el Pokémon de la partida tiene mega y aún no lleva piedra. Si la
+  // tienda carga después, la oferta espera en NX.shop._q.
+  const OFFER = {
+    id: 'pkm-megastone', name: 'Megapiedra', icon: 'up', cost: 14, weight: 0.6,
+    desc: 'Permite megaevolucionar en esta partida (barra MEGA, tecla G).',
+    when: (p) => NX.isOn(KEY) && !!run && run.p === p && !run.stone && canMega(p.dex),
+    buy: (p) => { if (!run || run.p !== p || run.stone) return false; grant('tienda'); return true; },
+  };
+  if (NX.shop && typeof NX.shop.addOffer === 'function') NX.shop.addOffer(OFFER);
+  else (NX.shop = NX.shop || { _q: [] })._q && NX.shop._q.push(OFFER);
+
+  // ---------------------------------------------------------------- transformación
+  function megaMod(p, m) {
+    const [key, name, types, b, g] = m;
+    const r = (i) => (b[i] > 0 ? g[i] / b[i] : 1);
+    const mod = {
+      form: true,
+      spd: NX.clamp(r(5), 0.6, 1.4),
+      mon(c, o) {
+        c.name = name;
+        c.types = types.slice();
+        if (typeof o.pa === 'number') c.pa = o.pa * r(1);
+        if (typeof o.sa === 'number') c.sa = o.sa * r(3);
+        if (typeof o.df === 'number') c.df = o.df * r(2);
+        if (typeof o.sd === 'number') c.sd = o.sd * r(4);
+        c.bst = (o.bst || 0) + 100;
+        c.mega = key;
+      },
+    };
+    if (spriteKeys.has(key)) mod.sprite = { dex: key, shiny: !!p.shiny && ns.Sprites.hasShiny(key) };
+    else mod.size = 1.25;
+    return mod;
+  }
+
+  async function activate() {
+    const p = run && run.p;
+    if (!p || p.dead || run.active || run.pending || !run.stone || !run.charge.full || !canMega(p.dex) || pm.formActive(p)) {
+      if (run && run.stone && !run.charge.full) NX.toast('La barra de megaevolución aún no está llena');
+      return;
+    }
+    const m = megaOf(p.dex);
+    run.pending = true;
+    try {
+      if (spriteKeys.has(m[0])) await ns.Sprites.preload([m[0]], 3000, !!p.shiny);
+    } catch (_) { /* se dibuja al cargar */ }
+    run.pending = false;
+    if (!run || run.p !== p || p.dead || NX.me() !== p) return;
+    const baseName = (pm.origMon(p) || {}).name || 'Tu Pokémon';
+    pm.setMod(p, KEY, megaMod(p, m));
+    const dur = NX.clamp(+NX.store.get(S_DUR, 25) || 25, 5, 120);
+    run.active = { t: dur, dur, key: m[0], t0: performance.now() };
+    run.uses++;
+    run.charge.reset();
+    p.invuln = Math.max(p.invuln || 0, 1);
+    pm.sfx('legend');
+    pm.kick(0.8);
+    pm.flash('#ffffff', 0.45, 0.6);
+    pm.bigText('¡Megaevolución!', '#ff9ed8', `${baseName} megaevolucionó en ${m[1]}`);
+    try {
+      for (let i = 0; i < 4; i++) ns.FX.ring(p.x, p.y, 4 + i * 6, 70 + i * 28, COLORS[i], 0.45 + i * 0.12, 4);
+      for (const c of COLORS) ns.FX.burst(p.x, p.y - p.bodyH * 0.5, c, 14, 170);
+    } catch (_) { /* sin efectos */ }
+  }
+
+  function revert(quiet) {
+    const p = run && run.p;
+    if (!run || !run.active) return;
+    run.active = null;
+    if (p) {
+      pm.clearMod(p, KEY);
+      if (!quiet) {
+        try { ns.FX.ring(p.x, p.y, 6, 54, '#b678ff', 0.4, 3); ns.FX.burst(p.x, p.y - p.bodyH * 0.5, '#ffffff', 10, 90); } catch (_) { /* nada */ }
+        NX.toast('La megaevolución terminó');
+      }
+    }
+    if (NX.store.get(S_USES, 'recharge') === 'once') run.stone = false;
+  }
+
+  function tick(dt, p) {
+    if (!run || run.p !== p) return;
+    if (run.active) {
+      run.active.t -= dt;
+      if (run.active.t <= 0 || p.dead || !pm.hasMod(p, KEY)) revert();
+      else if (Math.random() < dt * 10) { try { ns.FX.twinkle(p.x + (Math.random() - 0.5) * p.r * 3, p.y - Math.random() * p.bodyH); } catch (_) { /* nada */ } }
+    } else if (run.stone && canMega(p.dex)) run.charge.update(p);
+  }
+
+  // ---------------------------------------------------------------- dibujo (mundo)
+  function drawAura(ctx, p, front) {
+    const a = run.active, now = performance.now() / 1000;
+    const k = Math.min(1, (performance.now() - a.t0) / 500);
+    const rx = p.r * 2.1, ry = p.r * 0.85;
+    if (!front) {
+      pm.ellipseGlow(ctx, p.x, p.y, rx * 1.5, ry * 1.6, 'rgba(182,120,255,.55)', 0.55 * k);
+      ctx.save();
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 4; i++) {
+        const s = now * 2.4 + (i * Math.PI) / 2;
+        ctx.strokeStyle = COLORS[i];
+        ctx.globalAlpha = 0.75 * k;
+        ctx.beginPath();
+        ctx.ellipse(p.x, p.y, rx, ry, 0, s, s + 1.1);
+        ctx.stroke();
+      }
+      ctx.restore();
+      return;
+    }
+    // Delante: llamas de energía que suben y el símbolo mega sobre la cabeza.
+    ctx.save();
+    for (let i = 0; i < 6; i++) {
+      const ph = (now * 1.3 + i / 6) % 1, ang = i * 1.047 + now;
+      const x = p.x + Math.cos(ang) * rx * 0.8, y = p.y - ph * p.bodyH * 1.1;
+      ctx.globalAlpha = (1 - ph) * 0.8 * k;
+      ctx.fillStyle = COLORS[i % 4];
+      ctx.beginPath();
+      ctx.ellipse(x, y, 2.2, 4.5 * (1 - ph) + 1, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const hx = p.x, hy = p.y - p.bodyH - 12 + Math.sin(now * 3) * 2, R = 6;
+    ctx.globalAlpha = k;
+    for (let i = 0; i < 4; i++) {
+      ctx.fillStyle = COLORS[i];
+      ctx.beginPath();
+      ctx.moveTo(hx, hy);
+      ctx.arc(hx, hy, R, now * 3 + (i * Math.PI) / 2, now * 3 + ((i + 1) * Math.PI) / 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(hx, hy, R * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(11,24,56,.85)';
+    ctx.beginPath();
+    ctx.arc(hx, hy, R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  function drawables() {
+    const p = run && run.p;
+    if (!p || !run.active || p !== NX.me()) return null;
+    return [
+      { y: p.y - 0.5, draw: (ctx) => drawAura(ctx, p, false) },
+      { y: p.y + 0.5, draw: (ctx) => drawAura(ctx, p, true) },
+    ];
+  }
+
+  // ---------------------------------------------------------------- arranque
+  NX.feature({
+    key: KEY,
+    label: 'Megaevolución',
+    needs: (n) => !!NX.pm && NX.featureList().some((f) => f.key === 'pokemech' && f.status === 'ok') && n.SPRITE_META && n.Enemy && n.Pickups && typeof n.Pickups.drop === 'function',
+    setup(n) {
+      ns = n;
+      pm = NX.pm;
+      loadSprites();
+      // Jefes derrotados y objetos de cofre.
+      let inBossDie = false;
+      const EP = ns.Enemy.prototype, die = EP.die;
+      EP.die = function () {
+        const was = this.dead, boss = this.boss && !this.remote && !this.judge;
+        inBossDie = !!boss;
+        let r;
+        try { r = die.apply(this, arguments); } finally { inBossDie = false; }
+        try {
+          if (boss && !was && this.dead && run && NX.isOn(KEY) && pm.allowed() && !this.__pkmRaid) {
+            const ch = NX.clamp(+NX.store.get(S_BOSS, 35) || 0, 0, 100) / 100;
+            if (Math.random() < ch) grant('jefe');
+          }
+        } catch (err) { NX.trip(KEY, err); }
+        return r;
+      };
+      const P = ns.Pickups, drop = P.drop;
+      P.drop = function (kind) {
+        const r = drop.apply(this, arguments);
+        try {
+          if (kind === 'item' && !inBossDie && run && NX.isOn(KEY) && pm.allowed()) {
+            const ch = NX.clamp(+NX.store.get(S_CHEST, 6) || 0, 0, 100) / 100;
+            if (Math.random() < ch) grant('cofre');
+          }
+        } catch (err) { NX.trip(KEY, err); }
+        return r;
+      };
+      pm.onRun('start', (p) => {
+        run = { p, stone: false, charge: pm.charge(40, 300), active: null, pending: false, uses: 0 };
+        if (!NX.isOn(KEY) || !pm.allowed()) return;
+        if (NX.store.get(S_START, false)) run.stone = true;
+        else if (stock() > 0 && canMega(p.dex)) {
+          addStock(-1);
+          run.stone = true;
+          setTimeout(() => NX.toast(`Megapiedra de la reserva lista (quedan ${stock()})`), 1200);
+        }
+      });
+      pm.onRun('end', () => { if (run) run.active = null; run = null; });
+      pm.onTick(KEY, tick);
+      pm.drawables(KEY, drawables);
+      pm.button({
+        id: KEY, feat: KEY, label: 'MEGA', title: 'Megaevolución', key: 'G', keyCode: 'KeyG', color: '#ff7ad9',
+        state() {
+          const p = run && run.p;
+          if (!p || p !== NX.me() || !pm.allowed() || !run.stone || !canMega(p.dex)) return null;
+          if (run.active) return { show: true, active: NX.clamp(run.active.t / run.active.dur, 0, 1) };
+          return { show: true, ready: run.charge.full && !pm.formActive(p), frac: run.charge.frac };
+        },
+        run: activate,
+        fill: () => run && run.charge.fill(),
+      });
+      // Si el módulo se apaga a mitad de partida, la forma se deshace.
+      setInterval(() => { if (run && run.active && !NX.isOn(KEY)) revert(true); }, 500);
+    },
+  });
+
+  NX.megaApi = {
+    grant, addStock, stock,
+    available: (dex) => canMega(dex),
+    list: () => Object.entries(TABLE).map(([dex, m]) => ({ dex: +dex, key: m[0], name: m[1], sprite: spriteKeys.has(m[0]) })),
+  };
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Megaevolución',
+    keywords: 'mega megaevolucion megapiedra piedra transformacion charizard gengar lucario',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.range('Duración', S_DUR, 10, 60, 5, 25, (v) => v + ' s'));
+      el.appendChild(NX.ui.select('Usos por Megapiedra', S_USES, [['recharge', 'Se recarga con el daño'], ['once', 'Uno por partida']], 'recharge'));
+      el.appendChild(NX.ui.range('Probabilidad de Megapiedra al vencer un jefe', S_BOSS, 0, 100, 5, 35, (v) => v + '%'));
+      el.appendChild(NX.ui.range('Probabilidad con cada objeto de cofre', S_CHEST, 0, 30, 1, 6, (v) => v + '%'));
+      el.appendChild(NX.ui.toggle('Empezar cada partida con la Megapiedra', S_START, false));
+      el.appendChild(NX.ui.toggle('Sin sprites mega, usar el sprite normal agrandado', S_FALL, true));
+      const st = sprites === null ? 'cargando' : sprites ? `${spriteKeys.size} formas con sprite` : 'sin sprites mega (laboratorio)';
+      el.appendChild(NX.ui.note(`Megapiedras en reserva: ${stock()} · Sprites: ${st}. Con Megapiedra, el daño carga la barra MEGA; al llenarse, G o el botón transforman al Pokémon. Mientras dura cambia de sprite, tipos y estadísticas (las de la serie, unos +100 puntos en total). La reserva guarda las piedras que salen sin un Pokémon compatible y se gasta sola al empezar con uno que sí tenga mega.`));
+      el.appendChild(NX.ui.note('Megas: ' + Object.values(TABLE).map((m) => m[1].replace('Mega-', '')).join(', ') + '.'));
+    },
+  });
+})();
+
 // ---- features/minimap.js
 // Minimapa flotante. Todo se lee de los módulos del juego en cada cuadro:
 // World para el terreno, EnemyMgr / Pickups / Rift / Events para marcadores
@@ -6539,7 +8932,7 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   const LAYERS = [
     ['terrain', 'Terreno'], ['view', 'Área visible'], ['enemies', 'Enemigos'], ['bosses', 'Jefes y legendarios'],
     ['shinies', 'Shinies'], ['golden', 'Dorados y ladrones'], ['chests', 'Cofres'], ['altars', 'Altares'],
-    ['springs', 'Charcos curativos'], ['items', 'Objetos'], ['rift', 'Grietas'], ['events', 'Eventos'], ['mates', 'Aliados'],
+    ['springs', 'Charcos curativos'], ['items', 'Objetos'], ['rift', 'Grietas'], ['events', 'Eventos'], ['mates', 'Aliados'], ['extras', 'Terrenos, objetos y portales'],
   ];
   const layer = (k) => NX.store.get('map:' + k, true) !== false;
 
@@ -6824,6 +9217,36 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
       }
     }
 
+    // Marcadores de otros módulos (terrenos, objetos del mapa, portales):
+    // NX.mapMarkers = [{ key, list() -> [{ x, y, color, shape: 'zone'|'item'|'portal', r? }] }].
+    if (layer('extras') && Array.isArray(NX.mapMarkers)) {
+      for (const src of NX.mapMarkers) {
+        let items = [];
+        try { items = (src && src.list && src.list()) || []; } catch (_) { items = []; }
+        for (const q of items) {
+          if (!q || typeof q.x !== 'number') continue;
+          if (q.shape === 'zone') {
+            if (!inside(q.x, q.y)) continue;
+            g.save();
+            g.globalAlpha = 0.35;
+            g.beginPath();
+            g.arc(toX(q.x), toY(q.y), Math.max(3, (q.r || 80) * s), 0, Math.PI * 2);
+            g.fillStyle = q.color || '#9fe8ff';
+            g.fill();
+            g.restore();
+          } else if (q.shape === 'portal') {
+            const [x, y] = edge(q.x, q.y);
+            g.lineWidth = 2.5;
+            g.strokeStyle = q.color || '#7dff9a';
+            g.beginPath(); g.arc(x, y, 5 + Math.sin(now / 200), 0, Math.PI * 2); g.stroke();
+          } else {
+            const [x, y] = edge(q.x, q.y);
+            dot(x, y, 3.5, q.color || '#ffd23f', '#0b1838');
+          }
+        }
+      }
+    }
+
     // Tú, como una flecha que apunta hacia donde caminas.
     g.save();
     g.translate(H, H);
@@ -6952,6 +9375,8 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   const ACTIONS = [
     { id: 'panel', label: 'Ajustes de Nexus', kind: 'open', wide: true, run: () => { if (NX.togglePanel && !NX.shown('nexus-panel')) NX.togglePanel(); } },
     { id: 'map', label: 'Minimapa', feat: 'minimap', kind: 'toggle', state: () => NX.store.get('mapShown', true), run: () => press('KeyM', 'm', true) },
+    { id: 'rbuilds', label: 'Builds', feat: 'rbuilds', kind: 'toggle', state: () => !!NX.store.get('rb:pin', false),
+      run: () => { const on = !NX.store.get('rb:pin', false); NX.store.set('rb:pin', on); NX.toast(on ? 'Builds visibles' : 'Builds ocultas'); } },
     { id: 'meter', label: 'Medidor de daño', feat: 'meter', kind: 'toggle', state: () => !!NX.store.get('meter:pin', false),
       run: () => { const on = !NX.store.get('meter:pin', false); NX.store.set('meter:pin', on); NX.toast(on ? 'Medidor de daño visible' : 'Medidor de daño oculto'); } },
     { id: 'hitbox', label: 'Hitboxes', feat: 'hitboxes', kind: 'toggle', state: () => !!NX.store.get('hitbox:shown', false), run: () => press('KeyB', 'b', true) },
@@ -6960,13 +9385,19 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
     { id: 'hist', label: 'Historial', feat: 'hist', kind: 'open', run: () => { if (!NX.shown('nexus-hist')) press('KeyR', 'r', true); } },
     { id: 'shot', label: 'Captura limpia', feat: 'cleancap', kind: 'run', wide: true, delay: 150, run: () => press('KeyS', 's', true) },
   ];
-  const avail = (a) => !a.feat || NX.isOn(a.feat);
+  // Las mecánicas Pokémon (Mega, Dinamax, Tera, Z) aportan sus propias acciones en NX.pm.actions().
+  const allActions = () => {
+    let extra = [];
+    try { extra = (NX.pm && typeof NX.pm.actions === 'function' && NX.pm.actions()) || []; } catch (_) { extra = []; }
+    return ACTIONS.concat(extra);
+  };
+  const avail = (a) => (!a.feat || NX.isOn(a.feat)) && (typeof a.show !== 'function' || a.show());
 
   function renderMenu() {
     const fovOn = NX.isOn('fov');
     const fov = Number(NX.store.get('fov', 1.3)) || 1;
     menu.innerHTML = `<div class="nx-mmh"><span>Nexus</span><button type="button" class="nx-mmx" data-a="close" aria-label="Cerrar">X</button></div>
-      <div class="nx-mmg">${ACTIONS.filter(avail).map((a) => {
+      <div class="nx-mmg">${allActions().filter(avail).map((a) => {
         const st = a.kind === 'toggle' ? `<i class="${a.state() ? 'on' : ''}">${a.state() ? 'Sí' : 'No'}</i>` : '';
         return `<button type="button" data-a="${a.id}"${a.wide ? ' class="nx-wide"' : ''}><span>${NX.esc(a.label)}</span>${st}</button>`;
       }).join('')}
@@ -7011,7 +9442,7 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
       renderMenu();
       return;
     }
-    const a = ACTIONS.find((x) => x.id === id);
+    const a = allActions().find((x) => x.id === id);
     if (!a || !avail(a)) return;
     if (a.kind === 'toggle') { a.run(); renderMenu(); return; }
     if (a.kind === 'open') { closeMenu(true); a.run(); return; }
@@ -8252,6 +10683,1119 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   });
 })();
 
+// ---- features/pickups.js
+// Objetos del mapa: pickups raros que aparecen en el mundo durante la
+// partida y se recogen al pasar cerca. Reloj (congela a los enemigos unos
+// segundos), Imán (atrae toda la experiencia), Bomba (limpia la pantalla) y
+// Baya Zidra (cura). Se dibujan en pixel art bajo el HUD, con una flecha en
+// el borde cuando quedan fuera de vista, y se exponen como marcadores en
+// NX.mapMarkers. No tocan funciones del juego: solo usan sus efectos
+// (applyStun, Pickups.pullAll, hurt, heal). Fuera del cooperativo.
+(() => {
+  const KEY = 'pickups';
+  const LIFE = 60, MAX = 3, FREEZE = 5;
+  const PAL = {
+    y: '#ffd23f', W: '#ffffff', k: '#0b1838', r: '#b0203a', R: '#ff4a5f', s: '#8a96a8', S: '#e8eef6',
+    b: '#2a2f45', B: '#8a93b8', f: '#c98a3c', F: '#ffe27a', g: '#2f8f3a', G: '#5fe08a', z: '#ffcf3a', Z: '#fff1a0', o: '#c98a10',
+  };
+  const KINDS = {
+    clock: {
+      name: 'Reloj', note: 'congela a los enemigos', glow: '#7fe0ff', w: 20,
+      art: ['...yyyy...', '..yWWWWy..', '.yWWWkWWy.', 'yWWWWkWWWy', 'yWWWWkWWWy', 'yWWWWkkkWy', 'yWWWWWWWWy', '.yWWWWWWy.', '..yWWWWy..', '...yyyy...'],
+    },
+    magnet: {
+      name: 'Imán', note: 'atrae toda la experiencia', glow: '#ff9ed8', w: 25,
+      art: ['.ss....ss.', 'sSSs..sSSs', 'rRRr..rRRr', 'rRRr..rRRr', 'rRRr..rRRr', 'rRRr..rRRr', 'rRRRrrRRRr', '.rRRRRRRr.', '..rrrrrr..', '..........'],
+    },
+    bomb: {
+      name: 'Bomba', note: 'limpia la pantalla', glow: '#ff7b3d', w: 20,
+      art: ['.......f..', '......f.F.', '.....bb...', '...bbbbb..', '..bBBbbbb.', '.bBbbbbbbb', '.bbbbbbbbb', '.bbbbbbbbb', '..bbbbbbb.', '...bbbbb..'],
+    },
+    food: {
+      name: 'Baya Zidra', note: 'cura un 35 % de la vida', glow: '#5fe08a', w: 35,
+      art: ['....gg....', '...gGg....', '..zzzzzz..', '.zZZzzzzz.', 'zZZzzzzzzz', 'zZzzzzzzzz', 'zzzzzzzzzo', '.zzzzzzzo.', '..zzzzoo..', '...oooo...'],
+    },
+  };
+  const ORDER = Object.keys(KINDS);
+
+  let ns = null, items = [], nextT = 0, runP = null, freezeUntil = 0, freezeStart = 0;
+  const opt = (k, d) => NX.store.get('pick:' + k, d);
+  const on = () => NX.isOn(KEY);
+  const kindOn = (k) => opt(k, true) !== false;
+  const coop = () => !!(ns && ns.Coop && ns.Coop.active);
+  const now = () => (ns && ns.Game.st && ns.Game.st.time) || 0;
+
+  function reset() { items = []; nextT = 0; freezeUntil = 0; }
+
+  function spot(p, dMin, dMax) {
+    const W = ns.World, TS = W.TS || 32, A = W.arena;
+    for (let i = 0; i < 16; i++) {
+      const a = Math.random() * Math.PI * 2, d = dMin + Math.random() * (dMax - dMin);
+      const x = p.x + Math.cos(a) * d, y = p.y + Math.sin(a) * d;
+      if (A) {
+        const cx = A.tx * TS + TS / 2, cy = A.ty * TS + TS / 2;
+        if (Math.hypot(x - cx, y - cy) > (A.r - 2) * TS) continue;
+      }
+      if (W.kindAt(x, y) !== 'floor') continue;
+      if (W.isFree && !W.isFree(x, y, 12)) continue;
+      return [x, y];
+    }
+    return null;
+  }
+
+  function pickKind() {
+    const list = ORDER.filter(kindOn);
+    if (!list.length) return null;
+    let tot = 0;
+    for (const k of list) tot += KINDS[k].w;
+    let r = Math.random() * tot;
+    for (const k of list) { r -= KINDS[k].w; if (r <= 0) return k; }
+    return list[0];
+  }
+
+  // Crea un objeto. near=true lo pone junto al jugador (pruebas u otros módulos).
+  function spawn(p, kind, near) {
+    const k = kind && KINDS[kind] ? kind : pickKind();
+    if (!k) return null;
+    const at = near ? spot(p, 50, 90) : spot(p, 280, 640);
+    if (!at) return null;
+    const it = { kind: k, x: at[0], y: at[1], t0: now(), life: LIFE, ph: Math.random() * 6 };
+    items.push(it);
+    return it;
+  }
+
+  function say(text) {
+    try { if (ns.Spawner && ns.Spawner.say) ns.Spawner.say(text, 2); else NX.toast(text); } catch (_) { NX.toast(text); }
+  }
+  const sfx = (n) => { try { ns.Audio.sfx(n); } catch (_) { /* silencio */ } };
+  const ring = (x, y, r0, r1, col, d, w) => { try { ns.FX.ring(x, y, r0, r1, col, d, w); } catch (_) { /* nada */ } };
+
+  function collect(it, p) {
+    const C = ns.Camera;
+    if (it.kind === 'clock') {
+      freezeStart = now();
+      freezeUntil = freezeStart + FREEZE;
+      applyFreeze();
+      ring(p.x, p.y, 10, 520, '#7fe0ff', 0.7, 5);
+      sfx('confirm');
+      say('¡Reloj! Enemigos congelados ' + FREEZE + ' s');
+    } else if (it.kind === 'magnet') {
+      try { ns.Pickups.pullAll(); } catch (_) { /* nada */ }
+      ring(p.x, p.y, 10, 420, '#ff9ed8', 0.6, 4);
+      sfx('confirm');
+      say('¡Imán! Toda la experiencia viene hacia ti');
+    } else if (it.kind === 'bomb') {
+      try { C.kick(0.8); } catch (_) { /* nada */ }
+      ring(p.x, p.y, 20, C.outerRadius ? C.outerRadius() : 600, '#ff7b3d', 0.5, 6);
+      sfx('break');
+      const lvl = p.level || 1;
+      for (const e of ns.EnemyMgr.all()) {
+        if (e.dead || e.remote) continue;
+        if (C.sees && !C.sees(e.x, e.y, 0)) continue;
+        const big = e.boss || e.legend || e.judge || e.arceus;
+        const dmg = big ? 90 + 40 * lvl : (e.maxHp || 100) * 3 + (e.shield || 0) + 50;
+        try { e.hurt(dmg, 'normal', e.x - p.x, e.y - p.y, 160); } catch (err) { NX.trip(KEY, err); }
+      }
+      say('¡Bomba! Pantalla despejada');
+    } else if (it.kind === 'food') {
+      try { p.heal(p.maxHp * 0.35); } catch (_) { /* nada */ }
+      ring(p.x, p.y, 6, 70, '#5fe08a', 0.45, 3);
+      sfx('confirm');
+      say('¡Baya Zidra! Recuperas vida');
+    }
+  }
+
+  function applyFreeze() {
+    const left = freezeUntil - now();
+    if (left <= 0) return;
+    for (const e of ns.EnemyMgr.all()) {
+      if (e.dead || e.arceus || e.remote || typeof e.applyStun !== 'function') continue;
+      const big = e.boss || e.legend || e.judge;
+      if (big && now() - freezeStart > 2) continue; // los jefes solo se congelan 2 s
+      e.applyStun(Math.min(left, 0.3));
+    }
+  }
+
+  function tick() {
+    if (!ns || !on() || coop()) { if (items.length) reset(); return; }
+    const G = ns.Game, p = NX.me();
+    if (!NX.inRun() || !p) { if (items.length || freezeUntil) reset(); runP = null; return; }
+    if (p !== runP) { runP = p; reset(); }
+    if (G.state !== 'playing') return;
+    if ((ns.Judgment && ns.Judgment.active) || (ns.Rift && ns.Rift.inArena)) return;
+    const t = now();
+    items = items.filter((it) => t - it.t0 < it.life);
+    if (!nextT) nextT = t + 40 + Math.random() * 20;
+    if (t >= nextT) {
+      const every = +opt('freq', 55);
+      nextT = t + every * (0.75 + Math.random() * 0.5);
+      if (items.length < MAX) {
+        const it = spawn(p);
+        if (it && opt('notify', true)) NX.toast('Apareció un objeto en el mapa: ' + KINDS[it.kind].name);
+      }
+    }
+    if (freezeUntil > t) applyFreeze(); else freezeUntil = 0;
+    if (p.dead) return;
+    const reach = (p.r || 14) + 20;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (Math.hypot(p.x - it.x, p.y - it.y) > reach) continue;
+      items.splice(i, 1);
+      try { collect(it, p); } catch (err) { NX.trip(KEY, err); }
+    }
+  }
+
+  // ---------------------------------------------------------------- dibujo
+  function drawArt(g, art, cx, cy, u, flick) {
+    const rows = art.length, cols = art[0].length;
+    const x0 = Math.round(cx - (cols * u) / 2), y0 = Math.round(cy - (rows * u) / 2);
+    g.fillStyle = '#0b1838';
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) if (art[j][i] !== '.') g.fillRect(x0 + i * u - 1, y0 + j * u - 1, u + 2, u + 2);
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        let c = art[j][i];
+        if (c === '.') continue;
+        if (c === 'F' && flick) c = 'y';
+        g.fillStyle = PAL[c] || '#ff00ff';
+        g.fillRect(x0 + i * u, y0 + j * u, u, u);
+      }
+    }
+  }
+
+  function draw(g, w, h) {
+    if (!ns || !NX.inRun()) return;
+    const C = ns.Camera, S = C.scale || 1, ms = performance.now(), t = now();
+    if (freezeUntil > t) {
+      g.fillStyle = 'rgba(127,224,255,0.08)';
+      g.fillRect(0, 0, w, h);
+      g.font = `${Math.round(14 * Math.min(1.3, S))}px Pixelify, system-ui, sans-serif`;
+      g.textAlign = 'center';
+      g.lineWidth = 3; g.strokeStyle = '#0b1838';
+      const txt = 'Tiempo detenido · ' + Math.ceil(freezeUntil - t) + ' s';
+      g.strokeText(txt, w / 2, 160); g.fillStyle = '#bff2ff'; g.fillText(txt, w / 2, 160);
+    }
+    if (!items.length) return;
+    const u = Math.max(2, Math.round(2.3 * S));
+    for (const it of items) {
+      const K = KINDS[it.kind];
+      const left = it.life - (t - it.t0);
+      if (left < 10 && Math.sin(ms / 90) > 0.4) continue; // parpadea antes de irse
+      const [sx, sy] = NX.toScreen(it.x, it.y);
+      const off = sx < -20 || sy < -20 || sx > w + 20 || sy > h + 20;
+      if (off) { edge(g, sx, sy, w, h, K.glow); continue; }
+      const bob = Math.sin(ms / 300 + it.ph) * 3 * S;
+      g.fillStyle = 'rgba(0,0,0,.28)';
+      g.beginPath(); g.ellipse(sx, sy + 6 * S, 12 * S, 4 * S, 0, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 0.35 + 0.2 * Math.sin(ms / 220 + it.ph);
+      g.fillStyle = K.glow;
+      g.beginPath(); g.arc(sx, sy - 10 * S + bob, 18 * S, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 1;
+      drawArt(g, K.art, sx, sy - 10 * S + bob, u, Math.sin(ms / 70) > 0);
+    }
+  }
+
+  // Flecha pequeña en el borde hacia un objeto fuera de vista.
+  function edge(g, sx, sy, w, h, col) {
+    const cx = w / 2, cy = h / 2, dx = sx - cx, dy = sy - cy;
+    const k = Math.min((w / 2 - 26) / Math.abs(dx || 1e-6), (h / 2 - 26) / Math.abs(dy || 1e-6));
+    const x = cx + dx * k, y = cy + dy * k, a = Math.atan2(dy, dx);
+    g.save();
+    g.translate(Math.round(x), Math.round(y));
+    g.rotate(a);
+    g.fillStyle = '#0b1838';
+    g.beginPath(); g.moveTo(10, 0); g.lineTo(-6, -8); g.lineTo(-6, 8); g.closePath(); g.fill();
+    g.fillStyle = col;
+    g.beginPath(); g.moveTo(7, 0); g.lineTo(-4, -5.5); g.lineTo(-4, 5.5); g.closePath(); g.fill();
+    g.restore();
+  }
+
+  NX.mapMarkers = NX.mapMarkers || [];
+  NX.mapMarkers.push({
+    key: KEY,
+    list: () => (on() && NX.inRun() ? items.map((it) => ({ x: it.x, y: it.y, color: KINDS[it.kind].glow, shape: 'item', label: KINDS[it.kind].name })) : []),
+  });
+
+  NX.mapPickups = {
+    spawn(kind, near = true) { const p = NX.me(); if (!ns || !p) return null; return spawn(p, kind, near); },
+    list: () => items.map((it) => ({ ...it })),
+    frozen: () => Math.max(0, freezeUntil - now()),
+    clear: reset,
+  };
+
+  NX.hudLayers.push({ key: KEY, under: draw });
+
+  NX.feature({
+    key: KEY,
+    label: 'Objetos del mapa',
+    needs: (n) => n.World && typeof n.World.kindAt === 'function' && n.Pickups && typeof n.Pickups.pullAll === 'function' &&
+      n.EnemyMgr && typeof n.EnemyMgr.all === 'function' && n.Enemy && n.Enemy.prototype && typeof n.Enemy.prototype.applyStun === 'function' &&
+      n.Camera && typeof n.Camera.left === 'function' && n.Game && n.Game.st,
+    setup(n) {
+      ns = n;
+      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 100);
+      NX.runs.on('end', () => { reset(); runP = null; });
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Objetos del mapa',
+    keywords: 'objetos pickups reloj imán bomba baya comida congelar experiencia curar mapa',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.note('Objetos raros que aparecen en el mapa. Se recogen al pasar cerca y desaparecen a los ' + LIFE + ' s. No salen en cooperativo.'));
+      for (const k of ORDER) el.appendChild(NX.ui.toggle(`${KINDS[k].name} (${KINDS[k].note})`, 'pick:' + k, true));
+      el.appendChild(NX.ui.range('Un objeto nuevo cada', 'pick:freq', 25, 150, 5, 55, (v) => '~' + v + ' s'));
+      el.appendChild(NX.ui.toggle('Avisar cuando aparece uno', 'pick:notify', true));
+    },
+  });
+})();
+
+// ---- features/pokemech-core.js
+// Base común de las mecánicas Pokémon de la edición (megaevolución, Dinamax,
+// Teracristalización, movimientos Z, compañero y raids). Expone NX.pm con:
+//  - Transformaciones del jugador por capas (pm.setMod / pm.clearMod): cada
+//    capa puede cambiar el mon (clon con otros tipos o estadísticas), los
+//    multiplicadores de ataque, velocidad y vida, el tamaño, el área de los
+//    ataques y el sprite. Todo se aplica por proporción sobre lo que ya tenga
+//    el jugador, así que convive con lo que el juego cambie entretanto
+//    (subidas de nivel, objetos) y al quitar la última capa queda como estaba.
+//  - Un paso por cuadro de juego (pm.onTick), colgado de Combat.tick: solo
+//    corre en partida, sin pausa, y solo para el jugador local.
+//  - Dibujables del mundo (pm.drawables), que entran en el orden por
+//    profundidad del juego a través de Events.drawables.
+//  - Botones del HUD (pm.button) con anillo de carga, tecla, toque
+//    (Touch.addButton) y clic de mouse. pm.actions() lista las acciones
+//    activables para que el menú táctil pueda sumarlas.
+//  - Cargas por daño hecho (pm.charge), que se ajustan al daño medio de la
+//    partida para que llenar la barra tarde más o menos lo mismo siempre.
+// Las envolturas se instalan una vez y pasan de largo sin mecánicas activas.
+// Al terminar cada partida se quitan todas las capas del jugador.
+(() => {
+  const KEY = 'pokemech';
+  const pm = (NX.pm = {});
+  let ns = null;
+  const ALL_TYPES = ['normal', 'fire', 'water', 'grass', 'electric', 'ice', 'fighting', 'poison', 'ground', 'flying', 'psychic', 'bug', 'rock', 'ghost', 'dragon', 'dark', 'steel', 'fairy'];
+  pm.TYPES = ALL_TYPES;
+  pm.typeColor = (t) => ((ns && ns.U && ns.U.TYPE_COLOR) || {})[t] || '#c9d6ea';
+  pm.typeName = (t) => { try { return NX.gd ? NX.gd.typeName(t) : t; } catch (_) { return t; } };
+  pm.allowed = () => !!ns && !(ns.Coop && ns.Coop.active);
+  pm.playing = () => !!ns && ns.Game.state === 'playing' && NX.inRun();
+  pm.time = () => (ns && ns.Game.st && ns.Game.st.time) || 0;
+  pm.sfx = (name) => { try { ns.Audio.sfx(name); } catch (_) { /* sin sonido */ } };
+  pm.kick = (k) => { try { ns.Camera.kick(k); } catch (_) { /* sin sacudida */ } };
+  pm.say = (text, t) => { try { ns.Spawner.say(text, t || 2.8, true); } catch (_) { NX.toast(text); } };
+
+  // ---------------------------------------------------------------- capas del jugador
+  const bodies = new WeakMap();
+  const body = (p) => {
+    let s = bodies.get(p);
+    if (!s) {
+      s = { mods: new Map(), orig: p.mon, clone: null, atk: 1, spd: 1, hp: 1, size: 1, anim: p.anim, animK: 1, sprite: null };
+      bodies.set(p, s);
+    }
+    return s;
+  };
+  const prod = (s, k) => { let v = 1; for (const m of s.mods.values()) if (typeof m[k] === 'number') v *= m[k]; return v; };
+
+  function apply(p) {
+    const s = body(p), S = ns.Sprites;
+    // Mon: si el juego lo cambió (evolución), ese pasa a ser el original.
+    if (p.mon !== s.clone) s.orig = p.mon;
+    // Se aplican de menor a mayor prioridad (la Teracristalización va al final).
+    const monMods = [...s.mods.values()].filter((m) => typeof m.mon === 'function').sort((a, b) => (a.prio || 0) - (b.prio || 0));
+    if (monMods.length && s.orig) {
+      const c = Object.assign({}, s.orig);
+      c.types = (s.orig.types || []).slice();
+      for (const m of monMods) m.mon(c, s.orig);
+      s.clone = c;
+      p.mon = c;
+    } else {
+      if (s.clone && p.mon === s.clone) p.mon = s.orig;
+      s.clone = null;
+    }
+    // Ataque, velocidad y vida (la vida conserva la proporción).
+    const atk = prod(s, 'atk'), spd = prod(s, 'spd'), hp = prod(s, 'hp');
+    if (atk !== s.atk) { p.baseAtk *= atk / s.atk; s.atk = atk; }
+    if (spd !== s.spd) { p.baseSpd *= spd / s.spd; s.spd = spd; }
+    if (hp !== s.hp) {
+      const k = hp / s.hp;
+      p.maxHp = Math.max(1, Math.round(p.maxHp * k));
+      p.hp = Math.min(p.maxHp, p.hp * k);
+      s.hp = hp;
+    }
+    // Tamaño y sprite. El animador puede ser otro si el juego lo cambió.
+    if (p.anim !== s.anim) { s.anim = p.anim; s.animK = 1; s.sprite = null; }
+    let sprite = null;
+    for (const m of s.mods.values()) if (m.sprite) sprite = m.sprite;
+    const size = prod(s, 'size');
+    const curDex = s.sprite ? s.sprite.dex : p.dex;
+    const newDex = sprite ? sprite.dex : p.dex;
+    const spriteK = (d) => (d === p.dex ? 1 : (S.playerScale(d) || 1) / (S.playerScale(p.dex) || 1));
+    const animK = size * spriteK(newDex);
+    const swap = curDex !== newDex || (s.sprite && sprite && !!s.sprite.shiny !== !!sprite.shiny);
+    if (animK !== s.animK || swap) {
+      const oldBH = S.bodyHeight(curDex, p.anim.scale);
+      p.anim.scale *= animK / s.animK;
+      s.animK = animK;
+      if (swap) {
+        p.anim.dex = newDex;
+        p.anim.shiny = sprite ? !!sprite.shiny && S.hasShiny(newDex) : !!p.shiny;
+        try { p.anim._start(p.anim.base || 'Idle', false); } catch (_) { p.anim.frame = 0; p.anim.t = 0; }
+      }
+      const newBH = S.bodyHeight(newDex, p.anim.scale);
+      if (oldBH > 0 && newBH > 0) p.bodyH *= newBH / oldBH;
+    }
+    if (size !== s.size) {
+      p.scale *= size / s.size;
+      p.r *= size / s.size;
+      s.size = size;
+    }
+    s.sprite = sprite ? { dex: sprite.dex, shiny: !!sprite.shiny } : null;
+  }
+
+  // mod: { mon(clone, orig), prio, atk, spd, hp, size, area, sprite: { dex, shiny }, form: true }
+  pm.setMod = (p, key, mod) => { const s = body(p); s.mods.delete(key); s.mods.set(key, mod); apply(p); };
+  pm.clearMod = (p, key) => { const s = bodies.get(p); if (!s || !s.mods.has(key)) return; s.mods.delete(key); apply(p); };
+  pm.clearAll = (p) => { const s = bodies.get(p); if (!s || !s.mods.size) return; s.mods.clear(); apply(p); };
+  pm.hasMod = (p, key) => { const s = bodies.get(p); return !!s && s.mods.has(key); };
+  // ¿Alguna forma que cambia el tamaño o el sprite (mega, Dinamax) activa?
+  pm.formActive = (p) => { const s = bodies.get(p); if (!s) return null; for (const [k, m] of s.mods) if (m.form) return k; return null; };
+  pm.areaK = (p) => { const s = bodies.get(p); return s ? prod(s, 'area') : 1; };
+  pm.origMon = (p) => { const s = bodies.get(p); return s && p.mon === s.clone ? s.orig : p.mon; };
+
+  // ---------------------------------------------------------------- paso por cuadro y dibujables
+  const tickers = [];
+  pm.onTick = (key, fn) => tickers.push({ key, fn });
+  const drawers = [];
+  pm.drawables = (key, fn) => drawers.push({ key, fn });
+  const runSubs = { start: [], end: [] };
+  pm.onRun = (ev, fn) => runSubs[ev].push(fn);
+  const AREA_FIELDS = ['radius', 'size', 'width', 'range'];
+
+  // ---------------------------------------------------------------- cargas
+  // sec: segundos de daño medio que hacen falta; min: daño mínimo.
+  pm.charge = (sec, min = 250) => ({
+    v: 0, need: min, last: null, sec, min,
+    reset() { this.v = 0; this.last = null; this.need = this.min; },
+    update(p) {
+      const d = p.dmgDealt || 0;
+      if (this.last == null || d < this.last) this.last = d;
+      const gain = d - this.last;
+      this.last = d;
+      if (this.v >= this.need) return;
+      this.need = Math.max(this.min, (this.sec * d) / Math.max(20, pm.time()));
+      this.v = Math.min(this.need, this.v + gain);
+    },
+    get frac() { return this.need > 0 ? NX.clamp(this.v / this.need, 0, 1) : 0; },
+    get full() { return this.v >= this.need; },
+    fill() { this.v = this.need; },
+  });
+
+  // ---------------------------------------------------------------- botones del HUD
+  // def: { id, feat, label, key, keyCode, color, state() -> { show, ready, frac, active, text } | null, run() }
+  const buttons = [];
+  let rects = [], canvasEl = null;
+  pm.button = (def) => {
+    buttons.push(def);
+    if (def.keyCode) {
+      NX.keys.bind((e) => !e.altKey && !e.ctrlKey && !e.metaKey && e.code === def.keyCode && NX.isOn(KEY) && NX.isOn(def.feat) && pm.playing(),
+        (e) => {
+          const st = safeState(def);
+          if (!st || !st.show) return false;
+          if (!e.repeat) press(def);
+          return true;
+        });
+    }
+  };
+  // Para pruebas: llena la barra de una mecánica (def.fill).
+  pm.debugFill = (id) => { const b = buttons.find((x) => x.id === id); if (b && b.fill) b.fill(); return !!b; };
+  const safeState = (b) => { try { return b.state(); } catch (err) { NX.trip(b.feat, err); return null; } };
+  const press = (b) => { try { b.run(); } catch (err) { NX.trip(b.feat, err); } };
+  // Para el menú táctil (mobile.js) u otros: acciones que se pueden activar ahora.
+  pm.actions = () => buttons.filter((b) => NX.isOn(b.feat)).map((b) => {
+    const st = safeState(b) || {};
+    return { id: 'pm-' + b.id, label: b.title || b.label, feat: b.feat, kind: 'run', show: !!st.show, ready: !!st.ready, run: () => press(b) };
+  });
+
+  function drawButtons(ctx, W, H) {
+    rects = [];
+    if (!NX.store.get('pkm:hudBtns', true)) return;
+    const T = ns.Touch, touch = !!(T && T.active);
+    const list = [];
+    for (const b of buttons) {
+      if (!NX.isOn(b.feat)) continue;
+      const st = safeState(b);
+      if (st && st.show) list.push([b, st]);
+    }
+    if (!list.length) return;
+    const R = touch ? 25 : 21, G = touch ? 14 : 12;
+    const side = NX.store.get('pkm:hudSide', 'right');
+    const x = side === 'left' ? 16 + R : W - 16 - R;
+    const span = (list.length - 1) * (2 * R + G);
+    let y = Math.round(H * 0.5 - span / 2) - 20;
+    // Debajo del minimapa u otra ventana de Nexus que ocupe ese costado.
+    const k = NX.hudK ? NX.hudK() : 1;
+    for (const o of obstacles) {
+      const ox = o.left / k, ow = o.width / k;
+      if (x + R < ox || x - R > ox + ow) continue;
+      y = Math.max(y, Math.round(o.bottom / k) + R + 10);
+    }
+    y = Math.min(y, Math.max(R + 8, H - 150 - span));
+    const now = performance.now() / 1000;
+    for (const [b, st] of list) {
+      const col = st.color || b.color || '#ffd23f';
+      ctx.save();
+      // Fondo
+      ctx.beginPath();
+      ctx.arc(x, y, R, 0, Math.PI * 2);
+      ctx.fillStyle = st.ready || st.active ? 'rgba(12,20,44,.92)' : 'rgba(12,20,44,.7)';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(232,238,248,.85)';
+      ctx.stroke();
+      // Anillo: carga, o tiempo restante si está activo.
+      const f = st.active != null ? st.active : st.frac || 0;
+      if (f > 0) {
+        ctx.beginPath();
+        ctx.arc(x, y, R - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f);
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = col;
+        ctx.globalAlpha = st.ready ? 0.75 + 0.25 * Math.sin(now * 6) : 0.95;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      if (st.ready) {
+        ctx.beginPath();
+        ctx.arc(x, y, R + 3 + 2 * Math.sin(now * 5), 0, Math.PI * 2);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.6;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      ctx.font = `800 ${touch ? 12 : 11}px Pixelify,"Segoe UI",system-ui,sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(11,24,56,.95)';
+      const label = st.text || b.label;
+      ctx.strokeText(label, x, y);
+      ctx.fillStyle = st.ready || st.active ? '#ffffff' : 'rgba(220,230,248,.75)';
+      ctx.fillText(label, x, y);
+      if (!touch && b.key) {
+        ctx.font = '700 10px Pixelify,"Segoe UI",system-ui,sans-serif';
+        const kx = side === 'left' ? x + R + 2 : x - R - 2;
+        ctx.textAlign = side === 'left' ? 'left' : 'right';
+        ctx.strokeText(b.key, kx, y + R - 4);
+        ctx.fillStyle = '#ffd23f';
+        ctx.fillText(b.key, kx, y + R - 4);
+      }
+      ctx.restore();
+      rects.push({ b, x: x - R, y: y - R, w: 2 * R, h: 2 * R });
+      if (T && typeof T.addButton === 'function') { try { T.addButton(x - R, y - R, 2 * R, 2 * R, b.__tap || (b.__tap = () => { if (pm.playing()) press(b); }), 6); } catch (_) { /* sin toque */ } }
+      y += 2 * R + G;
+    }
+  }
+
+  // Ventanas de Nexus en la parte alta (minimapa), relativas al lienzo, a 4 Hz.
+  let obstacles = [];
+  setInterval(() => {
+    if (!canvasEl || !NX.inRun()) return;
+    const cr = canvasEl.getBoundingClientRect(), list = [];
+    for (const id of ['nexus-map']) {
+      const e = document.getElementById(id);
+      if (!e || e.classList.contains('hidden') || getComputedStyle(e).display === 'none') continue;
+      const r = e.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0 && r.top - cr.top < cr.height * 0.5) list.push({ left: r.left - cr.left, width: r.width, bottom: r.bottom - cr.top });
+    }
+    obstacles = list;
+  }, 250);
+
+  // Clic de mouse sobre los botones (el toque lo maneja Touch.addButton).
+  addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse' || e.button !== 0 || !rects.length || !canvasEl || !pm.playing()) return;
+    const cr = canvasEl.getBoundingClientRect(), k = NX.hudK ? NX.hudK() : 1;
+    const hx = (e.clientX - cr.left) / k, hy = (e.clientY - cr.top) / k;
+    for (const r of rects) {
+      if (hx >= r.x && hx <= r.x + r.w && hy >= r.y && hy <= r.y + r.h) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        press(r.b);
+        return;
+      }
+    }
+  }, true);
+
+  // ---------------------------------------------------------------- dibujo compartido
+  pm.ellipseGlow = (ctx, x, y, rx, ry, color, alpha) => {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, rx);
+    g.addColorStop(0, color);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  // Destello de pantalla (capa del HUD).
+  let flash = null;
+  pm.flash = (color, dur = 0.5, alpha = 0.55) => { flash = { color, dur, alpha, t0: performance.now() }; };
+  // Texto grande centrado (capa del HUD).
+  let bigText = null;
+  pm.bigText = (text, color, sub, dur = 2.2) => { bigText = { text, color, sub, dur, t0: performance.now() }; };
+  function drawOverlay(ctx, W, H) {
+    const now = performance.now();
+    if (flash) {
+      const t = (now - flash.t0) / 1000 / flash.dur;
+      if (t >= 1) flash = null;
+      else {
+        ctx.save();
+        ctx.globalAlpha = flash.alpha * (1 - t);
+        ctx.fillStyle = flash.color;
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+      }
+    }
+    if (bigText) {
+      const t = (now - bigText.t0) / 1000;
+      if (t >= bigText.dur) bigText = null;
+      else {
+        const a = Math.min(1, t * 5, (bigText.dur - t) * 3);
+        const s = 1 + 0.25 * Math.max(0, 1 - t * 4);
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.translate(W / 2, H * 0.32);
+        ctx.scale(s, s);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '800 30px Pixelify,"Segoe UI",system-ui,sans-serif';
+        ctx.lineWidth = 6;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = 'rgba(11,24,56,.95)';
+        ctx.strokeText(bigText.text, 0, 0);
+        ctx.fillStyle = bigText.color || '#ffd23f';
+        ctx.fillText(bigText.text, 0, 0);
+        if (bigText.sub) {
+          ctx.font = '700 15px Pixelify,"Segoe UI",system-ui,sans-serif';
+          ctx.lineWidth = 4;
+          ctx.strokeText(bigText.sub, 0, 28);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(bigText.sub, 0, 28);
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- arranque
+  NX.feature({
+    key: KEY,
+    label: 'Mecánicas Pokémon (base)',
+    needs: (n) => n.Combat && typeof n.Combat.tick === 'function' && n.Events && typeof n.Events.drawables === 'function' &&
+      n.Player && n.Sprites && typeof n.Sprites.playerScale === 'function' && typeof n.Sprites.bodyHeight === 'function' &&
+      n.EnemyMgr && typeof n.EnemyMgr.queryCircle === 'function' && n.FX && n.Game,
+    setup(n) {
+      ns = n;
+      const C = ns.Combat, tick = C.tick;
+      C.tick = function (dt, pl) {
+        const me = NX.me();
+        if (!pl || pl !== me || !NX.isOn(KEY) || !pm.allowed()) return tick.apply(this, arguments);
+        // Área de los ataques: se agranda solo mientras el juego los lanza.
+        const k = pm.areaK(pl);
+        let saved = null;
+        if (k !== 1 && typeof pl.activeGroup === 'function') {
+          saved = [];
+          for (const m of pl.activeGroup() || []) {
+            if (!m) continue;
+            for (const f of AREA_FIELDS) if (typeof m[f] === 'number') { saved.push([m, f, m[f]]); m[f] *= k; }
+          }
+        }
+        let r;
+        try { r = tick.apply(this, arguments); } finally { if (saved) for (const [m, f, v] of saved) m[f] = v; }
+        for (const t of tickers) {
+          if (!NX.isOn(t.key)) continue;
+          try { t.fn(dt, pl, ns); } catch (err) { NX.trip(t.key, err); }
+        }
+        return r;
+      };
+      const E = ns.Events, ed = E.drawables;
+      E.drawables = function () {
+        const out = ed.apply(this, arguments);
+        if (!NX.isOn(KEY) || !NX.inRun() || !pm.allowed()) return out;
+        let extra = null;
+        for (const d of drawers) {
+          if (!NX.isOn(d.key)) continue;
+          let list = null;
+          try { list = d.fn(ns); } catch (err) { NX.trip(d.key, err); }
+          if (list && list.length) (extra || (extra = [])).push(...list);
+        }
+        return extra ? (Array.isArray(out) ? out.concat(extra) : extra) : out;
+      };
+      NX.hudLayers.push({
+        key: KEY,
+        over(ctx, w, h, pl) {
+          canvasEl = ctx.canvas || canvasEl;
+          if (!pl || pl !== NX.me() || !pm.allowed()) { rects = []; return; }
+          drawOverlay(ctx, w, h);
+          drawButtons(ctx, w, h);
+        },
+      });
+      NX.runs.on('start', (p) => { for (const f of runSubs.start) { try { f(p, ns); } catch (err) { console.warn('[nexus] pokemech', err); } } });
+      NX.runs.on('end', (p, how) => {
+        for (const f of runSubs.end) { try { f(p, ns, how); } catch (err) { console.warn('[nexus] pokemech', err); } }
+        try { pm.clearAll(p); } catch (err) { console.warn('[nexus] pokemech', err); }
+        flash = null; bigText = null; rects = [];
+      });
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Mecánicas Pokémon',
+    keywords: 'mega megaevolucion dinamax tera teracristal z compañero raid botones hud',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado (base de megaevolución, Dinamax, Tera, Z, compañero y raids)', 'on:' + KEY, true));
+      el.appendChild(NX.ui.toggle('Botones de las mecánicas en el HUD', 'pkm:hudBtns', true));
+      el.appendChild(NX.ui.select('Lado de los botones', 'pkm:hudSide', [['right', 'Derecha'], ['left', 'Izquierda']], 'right'));
+      el.appendChild(NX.ui.note('Teclas: G megaevolución, H Dinamax, T Teracristalización, Z movimiento Z. Los botones también responden al clic y al toque. Cada mecánica tiene su propia sección y se apaga por separado. En co-op no se activan.'));
+    },
+  });
+})();
+
+// ---- features/raids.js
+// Raids legendarias. De vez en cuando aparece una guarida cerca del jugador:
+// aviso en pantalla, una columna de luz roja durante unos segundos y luego un
+// legendario gigante (escala x2 sobre la de jefe) con mucha vida y un tiempo
+// límite. Si se vence, además de lo que suelta todo jefe del juego (monedas y
+// un objeto), deja monedas extra y un boleto (Pickups.drop 'coin' y 'ticket',
+// recogidos como cualquier otro) y, si está la megaevolución, una Megapiedra
+// (NX.megaApi.grant). Los caramelos del juego (Game.addCandy) son de Halloween,
+// así que no se usan. Si se acaba el tiempo, el legendario huye sin premio.
+//
+// El jefe se crea igual que los del juego (new Enemy(def, x, y, escala, true)
+// con Enemies.bossScale) y entra con EnemyMgr.add. No se marca como
+// "legend", para no tocar el registro de legendarios del guardado.
+(() => {
+  const KEY = 'raids';
+  const S_FIRST = 'pkm:raid:first', S_EVERY = 'pkm:raid:every', S_CHANCE = 'pkm:raid:chance', S_HP = 'pkm:raid:hp', S_LIMIT = 'pkm:raid:limit';
+  const LEG = [144, 145, 146, 150, 243, 244, 245, 249, 250, 377, 378, 379, 380, 381, 382, 383, 384, 480, 481, 482, 483, 484, 485, 486, 487, 488,
+    638, 639, 640, 641, 642, 643, 644, 645, 646, 716, 717, 718, 785, 786, 787, 788, 791, 792, 800, 888, 889, 890, 894, 895, 1001, 1002, 1003, 1004, 1007, 1008];
+  const WARN = 5, RED = '#ff3b5c', GOLD = '#ffd23f';
+  let ns = null, pm = null, run = null;
+
+  const num = (k, d, lo, hi) => NX.clamp(+NX.store.get(k, d) || d, lo, hi);
+  const pool = () => LEG.filter((d) => ns.DEX_BY[d] && ns.SPRITE_META[d]);
+  const blocked = () => {
+    try { return ns.EnemyMgr.bossAlive() || (ns.Rift && ns.Rift.inArena) || (ns.Judgment && ns.Judgment.active); } catch (_) { return true; }
+  };
+
+  function denSpot(p) {
+    const W = ns.World;
+    for (let i = 0; i < 12; i++) {
+      const a = Math.random() * Math.PI * 2, d = 200 + Math.random() * 60;
+      const x = p.x + Math.cos(a) * d, y = p.y + Math.sin(a) * d;
+      try { if (!W || typeof W.isFree !== 'function' || W.isFree(x, y)) return [x, y]; } catch (_) { return [x, y]; }
+    }
+    return [p.x + 180, p.y];
+  }
+
+  function startWarn(p) {
+    const list = pool();
+    if (!list.length) return;
+    const dex = list[Math.floor(Math.random() * list.length)];
+    const [x, y] = denSpot(p);
+    run.den = { dex, x, y, t: WARN };
+    try { ns.Sprites.preload([dex]); } catch (_) { /* nada */ }
+    pm.say('¡Una guarida brilla cerca! Se acerca una raid legendaria', WARN);
+    pm.sfx('rift');
+  }
+
+  function spawnBoss() {
+    const den = run.den, t = pm.time();
+    run.den = null;
+    const B = ns.Enemies.BOSSES || [];
+    const tpl = B.find((b) => b.at >= t) || B[B.length - 1] || { hp: 3000, spd: 80, dmg: 40, xp: 300, behavior: 'chase', shotDmg: 20, shotCd: 1.1, range: 260 };
+    const mon = ns.DEX_BY[den.dex] || {};
+    const def = Object.assign({}, tpl, { dex: den.dex, name: mon.name || tpl.name, hp: (tpl.hp || 3000) * num(S_HP, 3, 1, 8), xp: (tpl.xp || 300) * 2 });
+    delete def.at;
+    const sc = Object.assign({ hp: 1, spd: 1, dmg: 1 }, ns.Enemies.bossScale(t) || {});
+    const e = new ns.Enemy(def, den.x, den.y, sc, true);
+    e.__pkmRaid = true;
+    e.scale *= 2;
+    if (e.anim) e.anim.scale = e.scale;
+    try { e.r = ns.Sprites.bodyRadius(den.dex, e.scale); e.bodyH = ns.Sprites.bodyHeight(den.dex, e.scale); } catch (_) { e.r *= 2; e.bodyH *= 2; }
+    ns.EnemyMgr.add(e);
+    const limit = num(S_LIMIT, 150, 60, 600);
+    run.raid = { e, t: limit, limit };
+    run.count++;
+    pm.say(`¡Raid legendaria! ¡${e.name} gigante apareció!`, 3.5);
+    pm.bigText('¡Raid legendaria!', RED, `${e.name} gigante · ${Math.round(limit)} s para vencerlo`);
+    pm.sfx('legend');
+    pm.kick(1.3);
+    try {
+      ns.FX.ring(den.x, den.y, 10, 160, RED, 0.8, 6);
+      ns.FX.burst(den.x, den.y - 20, RED, 30, 240);
+    } catch (_) { /* nada */ }
+  }
+
+  function reward(e) {
+    const x = e.x, y = e.y, P = ns.Pickups;
+    const n = 12 + 4 * run.count;
+    for (let i = 0; i < n; i++) P.drop('coin', x + (Math.random() - 0.5) * 120, y + (Math.random() - 0.5) * 80, 5);
+    P.drop('ticket', x + 20, y - 10, 1);
+    P.drop('heal', x - 24, y + 6, 1);
+    let extra = '';
+    try { if (NX.megaApi && NX.isOn('mega')) { NX.megaApi.grant('raid'); extra = ' · Megapiedra'; } } catch (_) { /* nada */ }
+    pm.bigText('¡Raid superada!', GOLD, `${n} monedas extra · boleto${extra}`);
+    pm.sfx('shinyGet');
+  }
+
+  function flee(r) {
+    const e = r.e;
+    run.raid = null;
+    if (!e || e.dead) return;
+    try { ns.FX.ring(e.x, e.y, e.r, e.r * 5, RED, 0.6, 5); ns.FX.burst(e.x, e.y - e.bodyH * 0.5, '#ffffff', 20, 200); } catch (_) { /* nada */ }
+    e.dead = true;
+    e.fade = 0.35;
+    pm.say(`${e.name} huyó de la raid`, 3);
+  }
+
+  function tick(dt, p) {
+    if (!run || run.p !== p) return;
+    const t = pm.time();
+    if (run.raid) {
+      const r = run.raid;
+      if (!r.e || r.e.dead) { run.raid = null; return; }
+      r.t -= dt;
+      if (r.t <= 0) flee(r);
+      return;
+    }
+    if (run.den) {
+      run.den.t -= dt;
+      if (run.den.t <= 0) { if (blocked()) run.den = null; else spawnBoss(); }
+      return;
+    }
+    if (t >= run.nextAt) {
+      run.nextAt = t + num(S_EVERY, 5, 1, 20) * 60;
+      if (!blocked() && Math.random() < num(S_CHANCE, 70, 0, 100) / 100) startWarn(p);
+    }
+  }
+
+  function drawDen(ctx) {
+    const d = run.den, now = performance.now() / 1000, f = 1 - d.t / WARN;
+    pm.ellipseGlow(ctx, d.x, d.y, 60 + 30 * f, 26 + 12 * f, RED, 0.7);
+    ctx.save();
+    ctx.globalAlpha = 0.35 + 0.35 * f + 0.1 * Math.sin(now * 8);
+    const h = 120 + 260 * f, w = 10 + 18 * f;
+    const g = ctx.createLinearGradient(d.x, d.y - h, d.x, d.y);
+    g.addColorStop(0, 'rgba(255,59,92,0)');
+    g.addColorStop(1, 'rgba(255,90,130,.95)');
+    ctx.fillStyle = g;
+    ctx.fillRect(d.x - w / 2, d.y - h, w, h);
+    ctx.fillStyle = 'rgba(255,255,255,.8)';
+    ctx.fillRect(d.x - w / 6, d.y - h, w / 3, h);
+    ctx.globalAlpha = 0.8;
+    ctx.strokeStyle = RED;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 6]);
+    ctx.lineDashOffset = -now * 30;
+    ctx.beginPath();
+    ctx.ellipse(d.x, d.y, 70, 30, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  function drawTag(ctx) {
+    const r = run.raid, e = r.e;
+    if (!e || e.dead) return;
+    const now = performance.now() / 1000;
+    ctx.save();
+    ctx.globalAlpha = 0.5 + 0.2 * Math.sin(now * 5);
+    ctx.strokeStyle = RED;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(e.x, e.y, e.r * 1.9, e.r * 0.75, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.font = '800 9px Pixelify,"Segoe UI",system-ui,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(11,24,56,.9)';
+    const txt = 'RAID ' + NX.fmtTime(r.t);
+    const ty = e.y - e.bodyH - 10;
+    ctx.strokeText(txt, e.x, ty);
+    ctx.fillStyle = r.t < 20 ? '#ff8a96' : '#ffd1dc';
+    ctx.fillText(txt, e.x, ty);
+    ctx.restore();
+  }
+  function drawables() {
+    if (!run || run.p !== NX.me()) return null;
+    if (run.den) return [{ y: run.den.y, draw: drawDen }];
+    if (run.raid && run.raid.e && !run.raid.e.dead) return [{ y: run.raid.e.y - 1, draw: drawTag }];
+    return null;
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Raids legendarias',
+    needs: (n) => !!NX.pm && NX.featureList().some((f) => f.key === 'pokemech' && f.status === 'ok') && typeof n.Enemy === 'function' &&
+      n.Enemies && typeof n.Enemies.bossScale === 'function' && n.EnemyMgr && typeof n.EnemyMgr.add === 'function' && n.Pickups && n.Sprites && typeof n.Sprites.bodyRadius === 'function',
+    setup(n) {
+      ns = n;
+      pm = NX.pm;
+      const EP = ns.Enemy.prototype, die = EP.die;
+      EP.die = function () {
+        const was = this.dead;
+        const r = die.apply(this, arguments);
+        try {
+          if (this.__pkmRaid && !was && this.dead && run && run.raid && run.raid.e === this) { run.raid = null; reward(this); }
+        } catch (err) { NX.trip(KEY, err); }
+        return r;
+      };
+      pm.onRun('start', (p) => { run = { p, nextAt: num(S_FIRST, 4, 1, 30) * 60, den: null, raid: null, count: 0 }; });
+      pm.onRun('end', () => { run = null; });
+      pm.onTick(KEY, tick);
+      pm.drawables(KEY, drawables);
+      // Apagado a mitad de partida: se cancela la guarida y el legendario huye.
+      setInterval(() => {
+        if (!run || NX.isOn(KEY)) return;
+        run.den = null;
+        if (run.raid) flee(run.raid);
+      }, 1000);
+    },
+  });
+
+  // Para probar desde la consola o desde otro módulo.
+  NX.raidsApi = { start: () => { const p = run && run.p; if (p && !run.den && !run.raid) startWarn(p); }, state: () => (run ? { den: !!run.den, raid: !!run.raid, nextAt: run.nextAt, count: run.count } : null) };
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Raids legendarias',
+    keywords: 'raid raids legendario legendaria jefe gigante guarida evento',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.range('Primera oportunidad', S_FIRST, 1, 15, 1, 4, (v) => 'min ' + v));
+      el.appendChild(NX.ui.range('Luego, cada', S_EVERY, 2, 10, 1, 5, (v) => v + ' min'));
+      el.appendChild(NX.ui.range('Probabilidad en cada oportunidad', S_CHANCE, 10, 100, 5, 70, (v) => v + '%'));
+      el.appendChild(NX.ui.range('Vida del legendario', S_HP, 1, 6, 0.5, 3, (v) => 'x' + v.toFixed(1)));
+      el.appendChild(NX.ui.range('Tiempo para vencerlo', S_LIMIT, 60, 300, 15, 150, (v) => NX.fmtTime(v)));
+      el.appendChild(NX.ui.note('Aparece una guarida con aviso y, a los 5 segundos, un legendario gigante (el doble de tamaño de un jefe) con la vida de jefe multiplicada. Vencerlo da lo de todo jefe más monedas extra, un boleto y, si está activa la megaevolución, una Megapiedra. No ocurre con otro jefe en pantalla, en arenas de grieta ni en el Juicio.'));
+    },
+  });
+})();
+
+// ---- features/run-builds.js
+// Builds en partida, al estilo de la guía de SurvivorTiers:
+// - Con Tab (o fijo) un panel con las dos builds del Pokémon actual según el
+//   modelo de Nexus, a distancia y cuerpo a cuerpo, marcando qué movimientos
+//   ya llevas, en qué nivel, qué falta y cuál es el siguiente paso. Debajo,
+//   la build de SurvivorTiers si hay datos.
+// - En la subida de nivel, la carta que más acerca tu build lleva la marca
+//   "Mejor opción" con el motivo. Solo aconseja: tú eliges.
+// Usa NX.buildModel (build-model.js) y NX.gd (gamedata.js) de forma perezosa.
+(() => {
+  const KEY = 'rbuilds', CARDS = 'rbcards';
+  let el = null, body = null, lastHtml = '', drag = null;
+  let cacheDex = null, cacheStyles = null;
+
+  NX.css(`#nexus-rb{position:fixed;z-index:9997;width:330px;max-width:calc(100vw - 16px);box-sizing:border-box;padding:7px 9px 9px;color:#fff;
+  font:13px/1.3 var(--font,'Pixelify',system-ui,sans-serif);background:linear-gradient(#2c519f,#1a3170);border:2px solid #f4f8ff;
+  outline:2px solid #0b1838;border-radius:8px;box-shadow:inset 0 0 0 2px #5b83d6,0 4px 0 #0a1430;user-select:none;pointer-events:none}
+#nexus-rb.nx-pin{pointer-events:auto}
+#nexus-rb.hidden{display:none}
+#nexus-rb .rb-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-weight:700;letter-spacing:.04em;margin-bottom:5px}
+#nexus-rb .rb-h b{color:#ffd23f}#nexus-rb .rb-h span{color:#b9cbf0;font-weight:600;font-size:12px}
+#nexus-rb .rb-c{background:#0b1838;border-radius:6px;padding:5px 7px;margin:5px 0;border:1px solid transparent}
+#nexus-rb .rb-c.pick{border-color:#ffd23f}
+#nexus-rb .rb-t{display:flex;justify-content:space-between;align-items:baseline;font-weight:700;font-size:12.5px;margin-bottom:3px}
+#nexus-rb .rb-t em{font-style:normal;font-size:10.5px;color:#1b1528;background:#ffd23f;border-radius:7px;padding:0 6px;margin-left:5px}
+#nexus-rb .rb-t small{color:#b9cbf0;font-weight:600}
+#nexus-rb .rb-m{display:flex;align-items:center;gap:6px;font-size:12px;margin:2px 0}
+#nexus-rb .rb-m i{width:9px;height:9px;border-radius:50%;flex:0 0 9px;box-shadow:0 0 0 1px rgba(255,255,255,.35)}
+#nexus-rb .rb-m span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#nexus-rb .rb-m b{font-weight:600;font-size:11px;color:#7dff9a}
+#nexus-rb .rb-m.miss span{opacity:.55}#nexus-rb .rb-m.miss b{color:#b9cbf0}
+#nexus-rb .rb-n{font-size:11.5px;color:#9fe8ff;margin-top:3px}
+#nexus-rb .rb-s{font-size:11.5px;color:#b9cbf0;margin-top:4px}
+#nexus-rb .rb-next{margin-top:6px;padding:5px 7px;border-radius:6px;background:rgba(255,210,63,.14);font-size:12px}
+#nexus-rb .rb-next b{color:#ffd23f}
+#cards .card.nx-best{box-shadow:0 0 0 3px #7dff9a,0 0 16px rgba(125,255,154,.55)}
+#cards .card .nx-bo{display:inline-block;margin-left:6px;padding:0 6px;border-radius:7px;background:#7dff9a;color:#10241a;font-size:11px;text-shadow:none;vertical-align:middle}
+#cards .card .nx-bow{margin-top:3px;font-size:12px;color:#c9ffd8}
+#nexus-rbline{margin:0 auto 6px;font-size:12px;color:var(--muted,#b9cbf0);text-align:center}
+#nexus-rbline b{color:#ffd23f}`);
+
+  const dexOf = (p) => (p && (p.dex || (p.mon && p.mon.dex))) || null;
+  const stylesFor = (dex) => {
+    if (dex !== cacheDex) { cacheDex = dex; cacheStyles = null; }
+    if (!cacheStyles && NX.buildModel && NX.buildModel.styles) cacheStyles = NX.buildModel.styles(dex);
+    return cacheStyles;
+  };
+
+  // Una build como tarjeta: movimientos con su estado y lo que falta.
+  function card(G, title, b, own, pick, p) {
+    if (!b) return `<div class="rb-c"><div class="rb-t">${title}</div><div class="rb-s">No hay una build ${title.toLowerCase()} posible con lo que aprende.</div></div>`;
+    const have = b.moves.filter((m) => own.has(m.id)).length;
+    const rows = b.moves.map((m) => {
+      const o = own.get(m.id);
+      const max = (G.moveDef(m.id) || {}).maxLvl || 5;
+      const st = o ? (o.evolved ? 'evolucionado' : `Nv. ${o.lvl || 1}/${max}`) : 'falta';
+      return `<div class="rb-m${o ? '' : ' miss'}"><i style="background:${G.esc(G.typeColor(m.type))}"></i><span>${G.esc(m.name)}${m.buff ? ' (potenciador)' : ''}</span><b>${o ? '✓ ' : ''}${st}</b></div>`;
+    }).join('');
+    const evo = b.evoNeeds && b.evoNeeds.length ? `<div class="rb-n">Evoluciones: ${G.esc(b.evoNeeds.join(', '))}</div>` : '';
+    return `<div class="rb-c${pick ? ' pick' : ''}"><div class="rb-t"><span>${title}${pick ? '<em>recomendada</em>' : ''}</span><small>${have}/${b.moves.length}</small></div>${rows}${evo}</div>`;
+  }
+
+  // Qué hacer ahora con la build recomendada.
+  function nextStep(G, b, own, p) {
+    if (!b) return '';
+    const missing = b.moves.filter((m) => !own.has(m.id));
+    const slots = 4 - own.size;
+    if (missing.length && slots > 0) return `Busca <b>${G.esc(missing.slice(0, slots).map((m) => m.name).join(', '))}</b> en las cartas de nivel.`;
+    if (missing.length) return `Tus 4 huecos están llenos; la build pedía <b>${G.esc(missing.map((m) => m.name).join(', '))}</b>. Sube lo que más daño hace.`;
+    const low = b.moves.map((m) => ({ m, o: own.get(m.id) })).filter(({ m, o }) => o && !o.evolved && (o.lvl || 1) < ((G.moveDef(m.id) || {}).maxLvl || 5));
+    if (low.length) return `Sube al máximo <b>${G.esc(low.map(({ m }) => m.name).join(', '))}</b>.`;
+    const needs = [];
+    for (const m of b.moves) {
+      const e = G.evo && G.evo(m.id, p);
+      if (e && !e.have && !(own.get(m.id) || {}).evolved) needs.push(e.needName);
+    }
+    if (needs.length) return `Toma <b>${G.esc([...new Set(needs)].join(', '))}</b> para evolucionar.`;
+    return 'Build completa. A sobrevivir.';
+  }
+
+  function render() {
+    const pin = !!NX.store.get('rb:pin', false);
+    const mode = NX.store.get('tabview', 'builds');
+    const held = !!(NX.tabHeld && NX.tabHeld()) && mode !== 'damage';
+    const vis = NX.isOn(KEY) && (held || pin) && NX.inRun() && !NX.shown('scr-settings') && !NX.shown('nexus-panel') && !NX.shown('nexus-hist');
+    el.classList.toggle('hidden', !vis);
+    el.classList.toggle('nx-pin', pin);
+    if (!vis) return;
+    // Con "Ambos", al lado del medidor de daño si no se movió a mano.
+    if (!NX.store.get('pos:rb', null)) {
+      const m = document.getElementById('nexus-meter');
+      const beside = mode === 'both' && m && !m.classList.contains('hidden');
+      el.style.left = (beside ? Math.round(m.getBoundingClientRect().right + 8) : 12) + 'px';
+      el.style.top = '150px';
+    }
+    const G = NX.gd, p = NX.me(), dex = dexOf(p);
+    let html;
+    if (!G || !NX.buildModel || !dex) html = '<div class="rb-s">Esperando datos de la partida…</div>';
+    else {
+      const s = stylesFor(dex);
+      const own = new Map((p.moves || []).map((m) => [m.id, m]));
+      const pick = NX.buildModel.pickStyle(dex, [...own.keys()]);
+      const mon = (NX.ns.DEX_BY || {})[dex];
+      const st = G.tierOf && G.tierOf(dex);
+      const stLine = st && st.moves && st.moves.length
+        ? `<div class="rb-s">SurvivorTiers: ${G.tierBadge(st)} ${G.esc(G.styleName(st.style))} · ${st.moves.map((id) => (own.has(id) ? '✓ ' : '') + G.esc(G.moveName(id))).join(', ')}</div>` : '';
+      html = `<div class="rb-h"><b>BUILDS</b><span>${G.esc(mon ? mon.name : '#' + dex)}</span></div>
+        ${card(G, 'A distancia', s && s.ranged, own, pick === 'ranged', p)}
+        ${card(G, 'Cuerpo a cuerpo', s && s.melee, own, pick === 'melee', p)}
+        <div class="rb-next">${nextStep(G, s && s[pick], own, p)}</div>${stLine}`;
+    }
+    if (html !== lastHtml) { body.innerHTML = html; lastHtml = html; }
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Builds en partida',
+    needs: () => !!NX.buildModel && !!NX.gd,
+    setup() {
+      NX.onReady(() => {
+        el = document.createElement('div');
+        el.id = 'nexus-rb';
+        el.className = 'hidden';
+        el.innerHTML = '<div></div>';
+        body = el.firstChild;
+        document.body.appendChild(el);
+        for (const ev of ['pointerdown', 'mousedown', 'touchstart', 'click']) el.addEventListener(ev, (e) => e.stopPropagation());
+        // Sin posición guardada la decide render(); al arrastrarlo queda donde lo dejes.
+        drag = NX.draggable(el, 'rb', () => ({ x: 12, y: 150 }));
+        setInterval(() => { try { render(); } catch (err) { NX.trip(KEY, err); } }, 200);
+      });
+      NX.runs.on('start', () => { cacheDex = null; cacheStyles = null; });
+    },
+  });
+
+  // ---- "Mejor opción" en las cartas de subida de nivel
+  NX.feature({
+    key: CARDS,
+    label: 'Mejor opción en las cartas',
+    needs: (ns) => !!NX.buildModel && !!NX.gd && NX.gd.lvl && ns.LevelUp,
+    setup() {
+      const G = NX.gd;
+      let adv = null;
+      G.lvl.on(CARDS, (card, o, pl, on) => {
+        if (o.index === 0) {
+          adv = null;
+          const dex = dexOf(pl);
+          if (on && dex) {
+            const offers = G.lvl.offers().map((x) => { const [type, id] = String(x.key || '').split(':'); return { type, id }; });
+            try { adv = NX.buildModel.advise(dex, pl.moves || [], offers); } catch (err) { NX.trip(CARDS, err); }
+          }
+          line(adv, pl, on);
+        }
+        const best = adv && adv.best && adv.best.type === o.type && adv.best.id === o.id;
+        card.classList.toggle('nx-best', !!best);
+        let tag = card.querySelector('.nx-bo'), why = card.querySelector('.nx-bow');
+        if (best) {
+          const nm = card.querySelector('.nm'), txt = card.querySelector('.txt');
+          if (!tag && nm) { tag = document.createElement('span'); tag.className = 'nx-bo'; tag.textContent = 'Mejor opción'; nm.appendChild(tag); }
+          if (!why && txt) { why = document.createElement('div'); why.className = 'nx-bow'; txt.appendChild(why); }
+          if (why) why.textContent = G.cap ? G.cap(adv.best.why) : adv.best.why;
+        } else {
+          if (tag) tag.remove();
+          if (why) why.remove();
+        }
+      });
+      // Línea sobre las cartas: estilo recomendado y progreso de las dos builds.
+      function line(a, pl, on) {
+        const cards = document.getElementById('cards');
+        if (!cards) return;
+        let ln = document.getElementById('nexus-rbline');
+        if (!a || !on) { if (ln) ln.remove(); return; }
+        const s = NX.buildModel.styles(dexOf(pl));
+        const own = new Set((pl.moves || []).map((m) => m.id));
+        const prog = (b) => (b ? `${b.moves.filter((m) => own.has(m.id)).length}/${b.moves.length}` : 'no disponible');
+        if (!ln) { ln = document.createElement('div'); ln.id = 'nexus-rbline'; cards.insertAdjacentElement('beforebegin', ln); }
+        ln.innerHTML = `Build Nexus recomendada: <b>${a.styleName}</b> · a distancia ${prog(s.ranged)} · cuerpo a cuerpo ${prog(s.melee)}`;
+      }
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Builds en partida',
+    keywords: 'build tab distancia cuerpo melee ranged mejor opción cartas',
+    render(wrap) {
+      wrap.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      wrap.appendChild(NX.ui.note('Mantén Tab en partida para ver las dos builds de tu Pokémon (a distancia y cuerpo a cuerpo), lo que ya llevas y el siguiente paso. Calculadas con los datos del juego.'));
+      wrap.appendChild(NX.ui.select('Qué muestra Tab', 'tabview', [['builds', 'Builds'], ['damage', 'Daño'], ['both', 'Ambos']], 'builds'));
+      wrap.appendChild(NX.ui.toggle('Dejarlo fijo en pantalla (arrastrable)', 'rb:pin', false));
+      wrap.appendChild(NX.ui.button('Restablecer posición', () => { if (drag) drag.reset(); }));
+    },
+  });
+  NX.settings.section({
+    key: CARDS,
+    tab: 'Partida',
+    title: 'Mejor opción en las cartas',
+    keywords: 'cartas subida nivel recomendación build',
+    render(wrap) {
+      wrap.appendChild(NX.ui.toggle('Activado', 'on:' + CARDS, true, () => NX.gd && NX.gd.lvl.refresh()));
+      wrap.appendChild(NX.ui.note('Marca la carta que más acerca la build que te conviene con lo que ya llevas, y dice por qué. Solo aconseja.'));
+    },
+  });
+})();
+
 // ---- features/run-history.js
 // Historial de partidas, ranking personal y autopsia.
 // Alt+R abre una ventana con las últimas partidas (gráfica de daño en el
@@ -8594,6 +12138,312 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   });
 })();
 
+// ---- features/runcards.js
+// Cartas de partida: al empezar una partida (normal, Modificadores o
+// Infinito) eliges 1 de 3 cartas que cambian las reglas de esa partida. Las
+// cartas tienen rareza y se muestran como las cartas de subida de nivel del
+// juego. Los efectos usan ganchos reales: Enemy.hurt (críticos explosivos),
+// Enemy.die (lluvia de monedas), Player.hurt (cañón de cristal y último
+// aliento), Player.onDealt (vampirismo), Projectiles.spawn/update (rebote) y
+// Pickups.dropXp (botín). Los ganchos solo actúan con una carta en curso y
+// sobre el jugador de esa partida; los cambios de stats viven en ese jugador,
+// que el juego descarta al terminar, así que no queda nada que devolver.
+(() => {
+  const KEY = 'runcards';
+  const P = NX.prog;
+  const RAR = {
+    c: { name: 'Común', col: '#9fb1c9', w: 50 },
+    r: { name: 'Rara', col: '#4fb4ff', w: 30 },
+    e: { name: 'Épica', col: '#c77dff', w: 14 },
+    l: { name: 'Legendaria', col: '#ffd23f', w: 6 },
+  };
+  const scaleHp = (p, k) => { const r = p.maxHp ? p.hp / p.maxHp : 1; p.maxHp = Math.max(10, Math.round(p.maxHp * k)); p.hp = Math.max(1, Math.round(p.maxHp * r)); };
+  const CARDS = [
+    { id: 'critboom', rar: 'r', icon: 'star', name: 'Críticos explosivos', desc: '+5 % de críticos y cada crítico explota: 40 % del golpe a los enemigos cercanos.',
+      apply(p, fx) { p.critChance = (p.critChance || 0) + 0.05; fx.critBoom = true; } },
+    { id: 'fragile', rar: 'c', icon: 'book', name: 'Aprendiz frágil', desc: '+40 % de experiencia, pero -30 % de vida máxima.',
+      apply(p) { p.xpMul *= 1.4; scaleHp(p, 0.7); } },
+    { id: 'bounce', rar: 'r', icon: 'up', name: 'Rebote', desc: 'Tus proyectiles atraviesan 2 enemigos más y rebotan hacia el siguiente.',
+      apply(p, fx) { fx.bounce = true; } },
+    { id: 'extramove', rar: 'r', icon: 'cards', name: 'Repertorio prestado', desc: 'Empiezas con un movimiento extra al azar de tu Pokémon.',
+      apply(p, fx, ns) {
+        const pool = ns.Moves.poolFor(p.mon).filter((id) => !p.hasMove(id) && !(p.banned && p.banned.has(id)) && ns.Moves.BY_ID[id] && ns.Moves.BY_ID[id].kind !== 'buff');
+        if (pool.length) { p.addMove(P.pick(pool)); fx.note = 'Nuevo movimiento: ' + (NX.gd ? NX.gd.moveName(p.moves[p.moves.length - 1].id) : ''); }
+      } },
+    { id: 'loot', rar: 'c', icon: 'berry', name: 'Botín generoso', desc: 'Los enemigos sueltan bayas, imanes, bombas y esferas el doble de seguido.',
+      apply(p, fx) { fx.loot = true; } },
+    { id: 'cannon', rar: 'e', icon: 'bomb', name: 'Cañón de cristal', desc: '+50 % de daño, pero recibes un 50 % más de daño.',
+      apply(p, fx) { p.atkMul *= 1.5; fx.taken = 1.5; } },
+    { id: 'runner', rar: 'c', icon: 'boot', name: 'Velocista', desc: '+20 % de velocidad, pero -10 % de daño.',
+      apply(p) { p.spdMul *= 1.2; p.atkMul *= 0.9; } },
+    { id: 'vamp', rar: 'e', icon: 'heart', name: 'Colmillo vampiro', desc: 'Recuperas el 2 % del daño que haces (hasta un 3 % de tu vida por segundo).',
+      apply(p, fx) { fx.vamp = true; } },
+    { id: 'fortune', rar: 'c', icon: 'coin', name: 'Fortuna', desc: '+40 % de Pokémonedas al final, pero -15 % de experiencia.',
+      apply(p) { p.coinMul = (p.coinMul || 1) * 1.4; p.xpMul *= 0.85; } },
+    { id: 'giant', rar: 'r', icon: 'shield', name: 'Coloso', desc: '+60 de vida máxima, pero -10 % de velocidad.',
+      apply(p) { p.addMaxHp(60); p.spdMul *= 0.9; } },
+    { id: 'magnet', rar: 'c', icon: 'magnet', name: 'Imán total', desc: 'Duplica el radio de recogida de experiencia.',
+      apply(p) { p.magnet *= 2; } },
+    { id: 'reflex', rar: 'r', icon: 'clock', name: 'Reflejos de acero', desc: '-20 % de recarga en todos los movimientos, pero -15 % de vida máxima.',
+      apply(p) { p.cdMul *= 0.8; scaleHp(p, 0.85); } },
+    { id: 'strategist', rar: 'e', icon: 'cards', name: 'Estratega', desc: '+3 cambios de cartas de nivel en esta partida.',
+      apply(p) { p.rerollBonus = (p.rerollBonus || 0) + 3; } },
+    { id: 'lastbreath', rar: 'l', icon: 'heart', name: 'Último aliento', desc: 'Una vez por partida, un golpe mortal te deja en pie con el 35 % de vida.',
+      apply(p, fx) { fx.lastBreath = 1; } },
+    { id: 'coinrain', rar: 'c', icon: 'coin', name: 'Lluvia de monedas', desc: 'Cada enemigo derrotado tiene un 10 % de soltar Pokémonedas.',
+      apply(p, fx) { fx.coinRain = true; } },
+    { id: 'blessing', rar: 'l', icon: 'star', name: 'Bendición', desc: '+15 % de daño, +10 % de velocidad, -10 % de recarga y +30 de vida máxima.',
+      apply(p) { p.atkMul *= 1.15; p.spdMul *= 1.1; p.cdMul *= 0.9; p.addMaxHp(30); } },
+  ];
+  const BY = Object.fromEntries(CARDS.map((c) => [c.id, c]));
+  let ns = null, run = null, boomGuard = false;
+  const act = () => (run && run.card && NX.isOn(KEY) && ns.Game.player === run.player ? run : null);
+  P.runCard = () => { const r = act(); return r ? r.card.id : ''; };
+
+  const stats = () => { const s = NX.store.get('runcards:stats', {}); return s && typeof s === 'object' ? s : {}; };
+  function bump(id) { const s = stats(); s[id] = (s[id] || 0) + 1; NX.store.set('runcards:stats', s); }
+
+  // ---------------------------------------------------------------- ventana de elección
+  function cardHtml(c, i) {
+    const r = RAR[c.rar];
+    return `<div class="card" data-i="${i}" data-sfx="none" style="border-color:${r.col}">
+      <div class="ico" style="background:${r.col}33">${P.icon(c.icon, 32)}</div>
+      <div class="txt"><div class="nm">${NX.esc(c.name)} <span class="tag-chip" style="background:${r.col}">${r.name}</span></div><div class="ds">${NX.esc(c.desc)}</div></div>
+      <div class="key">${i + 1}</div></div>`;
+  }
+  function offer(p) {
+    const list = P.pickW(CARDS, 3, (c) => RAR[c.rar].w);
+    let done = false;
+    const choose = (c) => {
+      if (done) return;
+      done = true;
+      if (c) {
+        try { if (ns.Audio && ns.Audio.sfx) ns.Audio.sfx('confirm'); } catch (_) { /* nada */ }
+        const fx = {};
+        try { c.apply(p, fx, ns); } catch (err) { NX.trip(KEY, err); }
+        run = { player: p, card: c, fx, vampPool: 0 };
+        bump(c.id);
+        setTimeout(() => P.say('Carta: ' + c.name + (fx.note ? ' · ' + fx.note : ''), 3), 300);
+      }
+      P.hold.close();
+    };
+    P.hold.open((box) => {
+      box.innerHTML = `<h2>Carta de partida</h2><p class="sub">Elige una regla para esta partida<span class="kbd-hint"> · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></span></p>
+        <div class="cards">${list.map(cardHtml).join('')}</div>
+        <div class="nx-hd-row"><button type="button" class="btn small ghost" data-skip>Jugar sin carta</button></div>`;
+      box.querySelectorAll('.card').forEach((el) => el.addEventListener('click', () => choose(list[+el.dataset.i])));
+      box.querySelector('[data-skip]').addEventListener('click', () => choose(null));
+    }, {
+      key(e) {
+        const n = /^Digit([1-9])$/.exec(e.code) || /^Numpad([1-9])$/.exec(e.code);
+        if (n && list[+n[1] - 1]) choose(list[+n[1] - 1]);
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------- ganchos
+  function hook() {
+    const EP = ns.Enemy.prototype, PP = ns.Player.prototype, PR = ns.Projectiles, PK = ns.Pickups, EM = ns.EnemyMgr;
+
+    const ehurt = EP.hurt;
+    EP.hurt = function (dmg, color, vx, vy, knock, label) {
+      const res = ehurt.apply(this, arguments);
+      const r = act();
+      if (r && r.fx.critBoom && label === 'crit' && !boomGuard && !this.remote && typeof dmg === 'number') {
+        boomGuard = true;
+        try {
+          const x = this.x, y = this.y, rad = 72;
+          for (const e of EM.queryCircle(x, y, rad)) if (e !== this && !e.dead && !e.remote) e.hurt(dmg * 0.4, '#ffb347', e.x - x, e.y - y, 40, null);
+          ns.FX.ring(x, y, 8, rad, '#ffb347', 0.35, 4);
+        } catch (err) { NX.trip(KEY, err); } finally { boomGuard = false; }
+      }
+      return res;
+    };
+
+    const die = EP.die;
+    EP.die = function () {
+      const was = this.dead;
+      const res = die.apply(this, arguments);
+      const r = act();
+      if (r && r.fx.coinRain && !was && !this.remote && !this.judge && Math.random() < 0.1) {
+        try { PK.drop('coin', this.x + 6, this.y - 4, 2); } catch (_) { /* nada */ }
+      }
+      return res;
+    };
+
+    const phurt = PP.hurt;
+    PP.hurt = function (dmg) {
+      const r = act();
+      let res;
+      if (r && this === r.player && r.fx.taken && typeof dmg === 'number') {
+        const a = Array.prototype.slice.call(arguments);
+        a[0] = dmg * r.fx.taken;
+        res = phurt.apply(this, a);
+      } else res = phurt.apply(this, arguments);
+      if (r && this === r.player && r.fx.lastBreath && this.dead) {
+        r.fx.lastBreath = 0;
+        try { this.revive(0.35); P.say('¡Último aliento!', 2.4); } catch (err) { NX.trip(KEY, err); }
+      }
+      return res;
+    };
+
+    const dealt = PP.onDealt;
+    if (typeof dealt === 'function') {
+      PP.onDealt = function (n) {
+        const r = act();
+        if (r && r.fx.vamp && this === r.player && typeof n === 'number' && n > 0) r.vampPool += n * 0.02;
+        return dealt.apply(this, arguments);
+      };
+    }
+
+    const spawn = PR.spawn;
+    PR.spawn = function () {
+      const pr = spawn.apply(this, arguments);
+      const r = act();
+      if (r && r.fx.bounce && pr && pr.friendly && !pr.orb && !pr.boom && Number.isFinite(pr.pierce) && (!pr.owner || pr.owner === r.player)) {
+        pr.pierce += 2;
+        pr._nxb = 2;
+      }
+      return pr;
+    };
+    const pupd = PR.update;
+    PR.update = function () {
+      const res = pupd.apply(this, arguments);
+      const r = act();
+      if (r && r.fx.bounce) { try { bounceTick(); } catch (err) { NX.trip(KEY, err); } }
+      return res;
+    };
+
+    const dx = PK.dropXp;
+    PK.dropXp = function (x, y, xp, boss) {
+      const res = dx.apply(this, arguments);
+      const r = act();
+      if (r && r.fx.loot && !boss) {
+        try {
+          const q = Math.random(), rx = () => (Math.random() - 0.5) * 16;
+          if (q < 0.012) PK.drop('heal', x + rx(), y, 0);
+          else if (q < 0.02) PK.drop('magnet', x, y, 0);
+          else if (q < 0.026) PK.drop('bomb', x, y, 0);
+          if (Math.random() < 0.004 && ns.Orbs && typeof ns.Orbs.roll === 'function') PK.drop('sphere', x + rx(), y, ns.Orbs.roll());
+        } catch (err) { NX.trip(KEY, err); }
+      }
+      return res;
+    };
+  }
+
+  // Un proyectil marcado que acaba de golpear cambia de rumbo hacia el enemigo
+  // más cercano que todavía no tocó.
+  function bounceTick() {
+    const all = ns.Projectiles.all(), foes = ns.EnemyMgr.all();
+    for (const pr of all) {
+      if (!pr._nxb || !pr.hits || typeof pr.hits.size !== 'number') continue;
+      const n = pr.hits.size;
+      if (pr._nxh == null) { pr._nxh = n; continue; }
+      if (n <= pr._nxh) continue;
+      pr._nxh = n;
+      pr._nxb--;
+      let best = null, bd = 320 * 320;
+      for (const e of foes) {
+        if (e.dead || e.arceus || pr.hits.has(e.id)) continue;
+        const ex = e.x - pr.x, ey = (typeof e.cy === 'function' ? e.cy() : e.y) - pr.y, d = ex * ex + ey * ey;
+        if (d < bd) { bd = d; best = e; }
+      }
+      if (!best) continue;
+      const sp = Math.hypot(pr.vx, pr.vy) || 300;
+      const ex = best.x - pr.x, ey = (typeof best.cy === 'function' ? best.cy() : best.y) - pr.y, L = Math.hypot(ex, ey) || 1;
+      pr.vx = (ex / L) * sp;
+      pr.vy = (ey / L) * sp;
+      pr.t = Math.max(0, pr.t - 0.35);
+    }
+  }
+
+  function tick() {
+    const r = act();
+    if (!r || !r.fx.vamp || r.vampPool <= 0) return;
+    const p = r.player;
+    const amt = Math.min(r.vampPool, p.maxHp * 0.0075);
+    r.vampPool = 0;
+    if (!p.dead && p.hp < p.maxHp && amt > 0) p.heal(amt);
+  }
+
+  function start(p) {
+    run = null;
+    if (!NX.isOn(KEY) || !NX.store.get('runcards:offer', true) || !P.runOk()) return;
+    offer(p);
+  }
+  function end(p) {
+    if (!run || run.player !== p) return;
+    const c = run.card;
+    run = null;
+    if (c && ns.Game.state === 'over') P.overLine(`Carta de partida: <b>${NX.esc(c.name)}</b>`);
+  }
+
+  function catalog(el) {
+    const s = stats();
+    const list = document.createElement('div');
+    list.className = 'nx-pg-list';
+    list.innerHTML = ['l', 'e', 'r', 'c'].flatMap((k) => CARDS.filter((c) => c.rar === k)).map((c) => {
+      const r = RAR[c.rar];
+      return `<div class="nx-pg-item" style="border-color:${r.col}66"><div class="ico" style="background:${r.col}33">${P.icon(c.icon, 28)}</div>
+        <div class="txt"><div class="nm">${NX.esc(c.name)} <span class="tag-chip" style="background:${r.col}">${r.name}</span></div><div class="ds">${NX.esc(c.desc)}</div></div>
+        <div class="ds" title="Veces elegida">×${s[c.id] || 0}</div></div>`;
+    }).join('');
+    el.appendChild(list);
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Cartas de partida',
+    needs: (n) => n.Game && n.Player && n.Player.prototype && typeof n.Player.prototype.hurt === 'function' && n.Enemy && n.Enemy.prototype &&
+      typeof n.Enemy.prototype.hurt === 'function' && typeof n.Enemy.prototype.die === 'function' && n.Projectiles && typeof n.Projectiles.spawn === 'function' &&
+      typeof n.Projectiles.update === 'function' && n.Pickups && typeof n.Pickups.dropXp === 'function' && n.EnemyMgr && typeof n.EnemyMgr.queryCircle === 'function' &&
+      n.Moves && typeof n.Moves.poolFor === 'function' && typeof n.Game.togglePause === 'function' && n.UI && n.FX,
+    setup(n) {
+      ns = n;
+      hook();
+      NX.runs.on('start', (p) => { try { start(p); } catch (err) { NX.trip(KEY, err); } });
+      NX.runs.on('end', (p) => { try { end(p); } catch (err) { NX.trip(KEY, err); } });
+      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 250);
+      P.pill(KEY, () => { const r = act(); return r ? 'Carta: ' + r.card.name + (r.card.id === 'lastbreath' ? (r.fx.lastBreath ? ' (lista)' : ' (usada)') : '') : ''; });
+      P.tab({
+        key: KEY, title: 'Cartas', order: 4,
+        render(el, h) {
+          h.desc(el, `Al empezar una partida normal, de Modificadores o Infinito eliges 1 de 3 cartas. ${CARDS.length} cartas en total; las raras salen menos. No aparecen en el laboratorio, Boss Rush, el desafío diario ni el cooperativo.`);
+          el.appendChild(NX.ui.toggle('Ofrecer una carta al empezar la partida', 'runcards:offer', true));
+          catalog(el);
+        },
+      });
+      // Pruebas desde la consola.
+      NX.runcards = {
+        list: () => CARDS.map((c) => c.id),
+        current: () => P.runCard(),
+        offer: () => { const p = ns.Game.player; if (p && P.runOk()) offer(p); },
+        // Aplica una carta concreta a la partida en curso si todavía no tiene una.
+        pick(id) {
+          const p = ns.Game.player, c = BY[id];
+          if (!p || !c || act() || !P.runOk()) return false;
+          const fx = {};
+          c.apply(p, fx, ns);
+          run = { player: p, card: c, fx, vampPool: 0 };
+          return true;
+        },
+      };
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Cartas de partida',
+    keywords: 'cartas partida reglas rareza críticos rebote botín cañón cristal vampiro fortuna progreso',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.toggle('Ofrecer una carta al empezar la partida', 'runcards:offer', true));
+      el.appendChild(NX.ui.note(`Elige 1 de 3 cartas al empezar (${CARDS.length} cartas con rareza). Solo en partidas normales, Modificadores e Infinito.`));
+    },
+  });
+})();
+
 // ---- features/screen-filters.js
 // Filtros de pantalla sobre el canvas del juego: Game Boy (cuatro verdes),
 // nocturno (cálido y con menos brillo) y colores vivos, cada uno con su
@@ -8727,6 +12577,222 @@ html.nx-sf-crt #nexus-crt{display:block}
   });
 })();
 
+// ---- features/secrets.js
+// Personajes secretos: retos concretos que desbloquean un Pokémon. Al
+// cumplirlos se usa la función del propio juego para poseerlo
+// (DB.grant(dex, 'nexus'), la misma que usan el inicial y los rescates) y se
+// guarda con DB.commit. Si ya lo tenías, recibes su versión shiny con
+// DB.grantShiny. El progreso (mejor marca de cada reto) vive en NX.store.
+// Cuentan las partidas normales, Modificadores e Infinito en solitario.
+// Ganchos: Player.heal y Player.hurt, solo para anotar si hubo curación o
+// daño en la partida en curso; no cambian nada.
+(() => {
+  const KEY = 'secrets';
+  const P = NX.prog;
+  const ST = 'secrets:v1';
+  const mmss = (s) => NX.fmtTime(s);
+  // goal: meta numérica; val(r, p, t) devuelve el progreso de la partida en curso (o null).
+  const DEFS = [
+    { id: 'celebi', dex: 251, name: 'Sin una baya', desc: 'Sobrevive 20 minutos sin curarte (bayas, objetos ni habilidades; la regeneración pasiva no cuenta).',
+      goal: 1200, fmt: mmss, val: (r, p, t) => (r.healed ? null : t) },
+    { id: 'spiritomb', dex: 442, name: 'Un solo tipo', desc: 'Llega a los 15:00 con 4 movimientos del mismo tipo.',
+      goal: 900, fmt: mmss, val: (r, p, t) => (monoMoves(p) ? t : null) },
+    { id: 'marshadow', dex: 802, name: 'Sombra intocable', desc: 'Vence 3 jefes en una partida sin recibir daño mientras siguen en pie.',
+      goal: 3, fmt: (v) => v + ' jefes', val: (r) => r.cleanBosses },
+    { id: 'jirachi', dex: 385, name: 'Deseo cumplido', desc: 'Pasa 5 minutos seguidos sin recibir daño.',
+      goal: 300, fmt: mmss, val: (r, p, t) => t - r.lastHurt },
+    { id: 'lucario', dex: 448, name: 'Puño único', desc: 'Llega a los 10:00 con un solo movimiento en toda la partida.',
+      goal: 600, fmt: mmss, val: (r, p, t) => (r.maxMoves <= 1 ? t : null) },
+    { id: 'dragapult', dex: 887, name: 'Estampida', desc: 'Derrota a 1500 enemigos en una sola partida.',
+      goal: 1500, fmt: (v) => v + ' derrotas', val: (r, p) => p.kills || 0 },
+    { id: 'lapras', dex: 131, name: 'Gran travesía', desc: 'Alcanza el nivel 45 en una partida.',
+      goal: 45, fmt: (v) => 'Nv. ' + v, val: (r, p) => p.level || 1 },
+    { id: 'mew', dex: 151, name: 'Bajo la maldición', desc: 'Llega a los 10:00 con maldiciones de x1,80 o más.',
+      goal: 600, fmt: mmss, val: (r, p, t) => (P.curseMul && P.curseMul() >= 1.8 ? t : null) },
+    { id: 'mimikyu', dex: 778, name: 'Frágil pero letal', desc: 'Llega a los 12:00 con la carta de partida Cañón de cristal.',
+      goal: 720, fmt: mmss, val: (r, p, t) => (P.runCard && P.runCard() === 'cannon' ? t : null) },
+    { id: 'snorlax', dex: 143, name: 'Buen provecho', desc: 'Cosecha 10 bayas en el jardín.',
+      goal: 10, fmt: (v) => v + ' bayas', garden: true },
+  ];
+  const BY = Object.fromEntries(DEFS.map((d) => [d.id, d]));
+  let ns = null, run = null;
+  const act = () => (run && NX.isOn(KEY) && ns.Game.player === run.player ? run : null);
+
+  const load = () => { const s = NX.store.get(ST, null); return s && typeof s === 'object' ? Object.assign({ done: {}, best: {} }, s) : { done: {}, best: {} }; };
+  const save = (s) => NX.store.set(ST, s);
+
+  function monoMoves(p) {
+    const m = p.moves || [];
+    if (m.length < 4) return false;
+    const t = m[0] && m[0].type;
+    return !!t && m.every((x) => x.type === t);
+  }
+
+  // ---------------------------------------------------------------- recompensa
+  function grant(d) {
+    const D = ns.DB;
+    if (!D || !D.save || !D.save.owned) return 'sin guardado';
+    let what = '';
+    if (!D.owns(d.dex)) { D.grant(d.dex, 'nexus'); what = 'new'; }
+    else if (typeof D.grantShiny === 'function' && !D.ownsShiny(d.dex)) { D.grantShiny(d.dex, 'nexus'); what = 'shiny'; }
+    else what = 'dup';
+    try { D.commit(); } catch (err) { console.warn('[nexus] retos', err); }
+    return what;
+  }
+  function complete(id) {
+    const d = BY[id], s = load();
+    if (!d || s.done[id]) return false;
+    // Fuera de una partida válida solo se completan los retos del jardín.
+    const what = grant(d);
+    if (what === 'sin guardado') return false;
+    s.done[id] = { at: Date.now(), what };
+    s.best[id] = Math.max(s.best[id] || 0, d.goal);
+    save(s);
+    const name = NX.gd ? NX.gd.monName(d.dex) : '#' + d.dex;
+    const msg = what === 'new' ? `¡Reto cumplido! ${name} se une a tu equipo` : what === 'shiny' ? `¡Reto cumplido! ${name} shiny se une a tu equipo` : `¡Reto cumplido: ${d.name}!`;
+    if (P.live()) P.say(msg, 4); else NX.toast(msg);
+    try { if (ns.Audio && ns.Audio.sfx) ns.Audio.sfx('legend'); } catch (_) { /* nada */ }
+    P.refresh();
+    return true;
+  }
+
+  // ---------------------------------------------------------------- partida
+  function start(p) {
+    run = null;
+    if (!NX.isOn(KEY) || !P.runOk()) return;
+    run = { player: p, healed: false, lastHurt: 0, maxMoves: (p.moves || []).length, cleanBosses: 0, bosses: p.bosses || 0, bossLive: false, bossHit: false, best: {} };
+  }
+  function end(p) {
+    if (!run || run.player !== p) return;
+    flushBest(run);
+    run = null;
+  }
+  function flushBest(r) {
+    const s = load();
+    let ch = false;
+    for (const [id, v] of Object.entries(r.best)) if (v > (s.best[id] || 0)) { s.best[id] = v; ch = true; }
+    if (ch) save(s);
+  }
+  function tick() {
+    const r = act();
+    if (!r) return;
+    const p = r.player, t = P.time();
+    if (p.dead) return;
+    r.maxMoves = Math.max(r.maxMoves, (p.moves || []).length);
+    // Jefes vencidos sin recibir daño mientras estaban en pie.
+    const alive = ns.EnemyMgr.bossAlive();
+    if (alive && !r.bossLive) r.bossHit = false;
+    r.bossLive = alive;
+    const b = p.bosses || 0;
+    if (b > r.bosses) { if (!r.bossHit) r.cleanBosses += b - r.bosses; r.bosses = b; r.bossHit = false; }
+    const s = load();
+    for (const d of DEFS) {
+      if (d.garden || s.done[d.id]) continue;
+      let v = null;
+      try { v = d.val(r, p, t); } catch (_) { v = null; }
+      if (typeof v !== 'number' || !isFinite(v)) continue;
+      if (v > (r.best[d.id] || 0)) r.best[d.id] = Math.floor(v);
+      if (v >= d.goal) complete(d.id);
+    }
+  }
+
+  function hook() {
+    const PP = ns.Player.prototype;
+    const heal = PP.heal;
+    PP.heal = function () {
+      const r = act();
+      if (!r || this !== r.player) return heal.apply(this, arguments);
+      const h0 = this.hp;
+      const res = heal.apply(this, arguments);
+      if (this.hp - h0 >= 1) r.healed = true;
+      return res;
+    };
+    const hurt = PP.hurt;
+    PP.hurt = function () {
+      const r = act();
+      if (!r || this !== r.player) return hurt.apply(this, arguments);
+      const h0 = this.hp;
+      const res = hurt.apply(this, arguments);
+      if (this.hp < h0 || this.dead) { r.lastHurt = P.time(); if (r.bossLive) r.bossHit = true; }
+      return res;
+    };
+  }
+
+  // ---------------------------------------------------------------- pantalla
+  function render(el, h) {
+    const s = load();
+    const nDone = DEFS.filter((d) => s.done[d.id]).length;
+    h.desc(el, `Retos que desbloquean Pokémon. Cuentan las partidas normales, Modificadores e Infinito en solitario. Cumplidos: ${nDone} de ${DEFS.length}.`);
+    const list = document.createElement('div');
+    list.className = 'nx-pg-list';
+    el.appendChild(list);
+    const live = act();
+    for (const d of DEFS) {
+      const done = s.done[d.id];
+      const best = Math.max(s.best[d.id] || 0, (live && live.best[d.id]) || 0, d.garden ? gardenCount() : 0);
+      const pct = done ? 100 : Math.min(100, Math.round((best / d.goal) * 100));
+      const item = document.createElement('div');
+      item.className = 'nx-pg-item';
+      if (done) item.style.borderColor = '#5fe08a';
+      const name = NX.gd ? NX.gd.monName(d.dex) : '#' + d.dex;
+      item.innerHTML = `<div class="ico"></div><div class="txt"><div class="nm">${done ? NX.esc(name) : '???'} <span class="tag-chip" style="background:${done ? '#5fe08a' : '#9fb1c9'}">${NX.esc(d.name)}</span></div>
+        <div class="ds">${NX.esc(d.desc)}</div>
+        <div class="ds">${done ? (done.what === 'shiny' ? 'Recibiste su versión shiny' : done.what === 'dup' ? 'Ya lo tenías' : 'Desbloqueado') + ' el ' + new Date(done.at).toLocaleDateString('es-VE') : 'Mejor marca: ' + NX.esc(d.fmt(best)) + ' de ' + NX.esc(d.fmt(d.goal))}</div>
+        <div class="nx-pg-bar"><i style="width:${pct}%"></i></div></div>`;
+      try {
+        const cv = ns.UI.spriteCanvas(d.dex, 46, 46, {});
+        if (!done) cv.style.filter = 'brightness(0) opacity(.55)';
+        item.querySelector('.ico').appendChild(cv);
+      } catch (_) { item.querySelector('.ico').textContent = '?'; }
+      list.appendChild(item);
+    }
+  }
+  const gardenCount = () => (P.gardenHarvested ? P.gardenHarvested() : 0);
+
+  NX.feature({
+    key: KEY,
+    label: 'Personajes secretos',
+    needs: (n) => n.Game && n.DB && typeof n.DB.grant === 'function' && typeof n.DB.owns === 'function' && typeof n.DB.commit === 'function' &&
+      n.Player && n.Player.prototype && typeof n.Player.prototype.heal === 'function' && n.EnemyMgr && typeof n.EnemyMgr.bossAlive === 'function',
+    setup(n) {
+      ns = n;
+      hook();
+      NX.runs.on('start', (p) => { try { start(p); } catch (err) { NX.trip(KEY, err); } });
+      NX.runs.on('end', (p) => { try { end(p); } catch (err) { NX.trip(KEY, err); } });
+      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 500);
+      P.on('harvest', (total) => {
+        if (!NX.isOn(KEY)) return;
+        const d = BY.snorlax, s = load();
+        if (total > (s.best.snorlax || 0)) { s.best.snorlax = total; save(s); }
+        if (total >= d.goal) complete('snorlax');
+      });
+      P.tab({ key: KEY, title: 'Retos', order: 3, render });
+      NX.secrets = { list: () => DEFS.map((d) => ({ id: d.id, dex: d.dex, goal: d.goal })), state: load, progress: () => (act() ? Object.assign({}, act().best) : null) };
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Menús',
+    title: 'Personajes secretos',
+    keywords: 'retos secretos desbloquear pokémon mew celebi jirachi lucario progreso',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.note(`${DEFS.length} retos que desbloquean un Pokémon con la función del propio juego. Pantalla en el menú principal: Progreso Nexus, pestaña Retos.`));
+      el.appendChild(NX.ui.button('Abrir retos', () => { if (!P.inMenu()) { NX.toast('Ábrelo desde el menú principal'); return; } NX.togglePanel(); P.open(KEY); }));
+      let armed = false;
+      const b = NX.ui.button('Reiniciar marcas', () => {
+        if (!armed) { armed = true; b.textContent = '¿Seguro? Pulsa otra vez'; setTimeout(() => { armed = false; b.textContent = 'Reiniciar marcas'; }, 3500); return; }
+        const s = load();
+        save({ done: s.done, best: {} });
+        armed = false; b.textContent = 'Reiniciar marcas';
+        NX.toast('Marcas reiniciadas (los Pokémon desbloqueados se quedan)');
+      });
+      el.appendChild(b);
+    },
+  });
+})();
+
 // ---- features/sharpness.js
 // Nitidez y rendimiento. El juego calcula su resolución como
 // Math.min(1.5, devicePixelRatio) y guarda esa escala en una variable privada
@@ -8802,6 +12868,221 @@ html.nx-sf-crt #nexus-crt{display:block}
       el.appendChild(NX.ui.toggle('Escalado nítido de pixel art', 'pixel', false, refresh));
       el.appendChild(NX.ui.select('Límite de FPS', 'fps', [['0', 'Sin límite'], ['60', '60'], ['30', '30']], '0'));
       el.appendChild(NX.ui.note(`Tu pantalla: ${NX.realDpr().toFixed(2)}x. El juego dibuja a ${Math.min(1.5, NX.realDpr()).toFixed(2)}x como máximo.`));
+    },
+  });
+})();
+
+// ---- features/shop.js
+// Tienda entre oleadas: cada X minutos (y al vencer a un jefe) la partida se
+// pausa con una tienda de 4 ofertas. Se paga con Fichas Nexus, una moneda
+// propia de la partida (1 por cada 8 derrotas y 6 por jefe) que no toca el
+// guardado del juego. Ofertas: curación, mejoras de stat, cambio de cartas,
+// objetos y potenciadores temporales. Los cambios viven en el jugador de esa
+// partida; los temporales se deshacen al vencer su tiempo.
+//
+// Otros módulos pueden sumar ofertas en cualquier momento:
+//   NX.shop.addOffer({ id, name, desc, icon, cost, weight?, when?(p, ns), buy(p, ns) })
+// (register es un alias; si en vez de cost llega price en Pokémonedas, se
+// convierte a 1 ficha por cada 100). buy puede devolver false para cancelar
+// la compra (no se cobra). Si el
+// módulo carga antes que este archivo, puede dejar sus ofertas en
+// (NX.shop = NX.shop || { _q: [] })._q y se registran al cargar la tienda.
+(() => {
+  const KEY = 'shop';
+  const P = NX.prog;
+  const KILLS_PER_CHIP = 8, BOSS_CHIPS = 6;
+  let ns = null, run = null;
+  const act = () => (run && NX.isOn(KEY) && ns.Game.player === run.player ? run : null);
+  const T = () => P.time();
+
+  // Potenciador temporal: aplica ahora y deshace al vencer.
+  function timed(r, secs, label, on, off) {
+    on(r.player);
+    r.timers.push({ until: T() + secs, label, off });
+  }
+  const BASE = [
+    { id: 'oran', name: 'Baya Aranja', icon: 'berry', cost: 6, weight: 3, desc: 'Recupera el 40 % de tu vida.',
+      when: (p) => p.hp < p.maxHp * 0.95, buy: (p) => p.heal(p.maxHp * 0.4) },
+    { id: 'protein', name: 'Proteína', icon: 'fist', cost: 12, desc: '+8 % de daño para el resto de la partida.', buy: (p) => { p.atkMul *= 1.08; } },
+    { id: 'calcium', name: 'Calcio', icon: 'clock', cost: 12, desc: '-6 % de recarga en todos los movimientos.', when: (p) => p.cdMul > 0.35, buy: (p) => { p.cdMul *= 0.94; } },
+    { id: 'iron', name: 'Hierro', icon: 'shield', cost: 10, desc: '+5 % de reducción de daño.', when: (p) => p.dmgReduce < 0.65, buy: (p) => { p.dmgReduce = Math.min(0.7, p.dmgReduce + 0.05); } },
+    { id: 'hpup', name: 'Más PS', icon: 'heart', cost: 9, desc: '+25 de vida máxima (y la recupera).', buy: (p) => p.addMaxHp(25) },
+    { id: 'feather', name: 'Pluma Veloz', icon: 'boot', cost: 9, desc: '+6 % de velocidad de movimiento.', buy: (p) => { p.spdMul *= 1.06; } },
+    { id: 'reroll', name: 'Cambio de cartas', icon: 'cards', cost: 7, desc: '+1 cambio de cartas de nivel en esta partida.', buy: (p) => { p.rerollBonus = (p.rerollBonus || 0) + 1; } },
+    { id: 'pull', name: 'Imán de experiencia', icon: 'magnet', cost: 3, desc: 'Atrae toda la experiencia y los objetos del mapa.', buy: () => ns.Pickups.pullAll() },
+    { id: 'xatk', name: 'Ataque X', icon: 'up', cost: 8, weight: 1.4, desc: '+35 % de daño durante 60 s.',
+      buy: (p) => timed(run, 60, 'Ataque X', (q) => { q.atkMul *= 1.35; }, (q) => { q.atkMul /= 1.35; }) },
+    { id: 'xdef', name: 'Defensa X', icon: 'shield', cost: 8, weight: 1.2, desc: '+25 % de reducción de daño durante 60 s.',
+      buy: (p) => timed(run, 60, 'Defensa X', (q) => { q.dmgReduce += 0.25; }, (q) => { q.dmgReduce -= 0.25; }) },
+    { id: 'xspd', name: 'Velocidad X', icon: 'boot', cost: 6, desc: '+30 % de velocidad durante 60 s.',
+      buy: (p) => timed(run, 60, 'Velocidad X', (q) => { q.spdMul *= 1.3; }, (q) => { q.spdMul /= 1.3; }) },
+    { id: 'loan', name: 'Objeto prestado', icon: 'shop', cost: 10, desc: 'Llevas un objeto al azar durante 90 s (si no tienes ninguno).',
+      when: (p) => !p.item, buy: (p) => {
+        const id = ns.Items.roll();
+        if (!id) return false;
+        const name = (ns.Items.BY[id] || {}).name || id;
+        timed(run, 90, name, (q) => q.equip(id), (q) => { if (q.item === id) q.equip(null); });
+        P.say('Objeto prestado: ' + name, 2.4);
+        return true;
+      } },
+  ];
+  const extra = [];
+  const pool = () => BASE.concat(extra);
+
+  const prev = NX.shop;
+  NX.shop = {
+    addOffer(def) {
+      if (!def || !def.id || typeof def.buy !== 'function') return false;
+      // Acepta price (en Pokémonedas) en lugar de cost: 100 Pokémonedas = 1 ficha.
+      const cost = def.cost != null ? +def.cost : def.price != null ? Math.max(1, Math.round(+def.price / 100)) : 10;
+      const d = Object.assign({}, def, { cost: Math.max(0, cost || 0), name: def.name || def.id, desc: def.desc || '' });
+      const i = extra.findIndex((x) => x.id === d.id);
+      if (i >= 0) extra.splice(i, 1, d); else extra.push(d);
+      return true;
+    },
+    register(def) { return NX.shop.addOffer(def); },
+    removeOffer(id) { const i = extra.findIndex((d) => d.id === id); if (i >= 0) extra.splice(i, 1); },
+    offers: () => pool().map((d) => d.id),
+    chips: () => { const r = act(); return r ? r.chips : 0; },
+    give(n) { const r = act(); if (r) r.chips += Math.max(0, n | 0); },
+    open() { const r = act(); if (r) open(r); },
+  };
+  if (prev && Array.isArray(prev._q)) for (const d of prev._q) NX.shop.addOffer(d);
+
+  // ---------------------------------------------------------------- ventana
+  function eligible(p) {
+    return pool().filter((d) => { try { return !d.when || d.when(p, ns); } catch (_) { return false; } });
+  }
+  function open(r) {
+    if (r.open) return;
+    r.open = true;
+    r.visits++;
+    let offers = P.pickW(eligible(r.player), 4, (d) => (d.weight == null ? 1 : d.weight));
+    let rerollCost = 2;
+    let box = null;
+    const draw = () => {
+      if (!box) return;
+      box.innerHTML = `<h2>Tienda Nexus</h2>
+        <p class="sub"><span class="nx-hd-coins">${P.icon('ticket', 18)} ${r.chips} fichas</span> · ganas 1 cada ${KILLS_PER_CHIP} derrotas y ${BOSS_CHIPS} por jefe<span class="kbd-hint"> · <kbd>1</kbd>–<kbd>4</kbd> comprar · <kbd>R</kbd> cambiar · <kbd>Esc</kbd> seguir</span></p>
+        <div class="cards">${offers.map((d, i) => {
+          const sold = !!d._sold, poor = r.chips < d.cost;
+          return `<div class="card${sold || poor ? ' nx-pg-dis' : ''}" data-i="${i}" data-sfx="none" style="border-color:${sold ? '#5fe08a' : poor ? 'rgba(244,248,255,.25)' : '#ffd23f'}">
+            <div class="ico" style="background:#ffd23f22">${P.icon(d.icon || 'shop', 32)}</div>
+            <div class="txt"><div class="nm">${NX.esc(d.name)} <span class="tag-chip" style="background:${sold ? '#5fe08a' : '#ffd23f'}">${sold ? 'Comprado' : d.cost + ' fichas'}</span></div><div class="ds">${NX.esc(d.desc)}</div></div>
+            <div class="key">${i + 1}</div></div>`;
+        }).join('')}</div>
+        ${r.timers.length ? `<p class="nx-note">Activos: ${r.timers.map((t) => NX.esc(t.label) + ' ' + Math.max(0, Math.ceil(t.until - T())) + ' s').join(' · ')}</p>` : ''}
+        <div class="nx-hd-row"><button type="button" class="btn small" data-rr ${r.chips < rerollCost ? 'disabled' : ''}>Cambiar ofertas (${rerollCost} fichas)</button>
+        <button type="button" class="btn gold" data-go>Seguir</button></div>`;
+      box.querySelectorAll('.card').forEach((el) => el.addEventListener('click', () => buy(+el.dataset.i)));
+      box.querySelector('[data-rr]').addEventListener('click', reroll);
+      box.querySelector('[data-go]').addEventListener('click', () => P.hold.close());
+    };
+    const buy = (i) => {
+      const d = offers[i];
+      if (!d || d._sold) return;
+      if (r.chips < d.cost) { try { ns.Audio.sfx('back'); } catch (_) { /* nada */ } return; }
+      let ok = true;
+      try { ok = d.buy(r.player, ns) !== false; } catch (err) { ok = false; NX.trip(KEY, err); }
+      if (!ok) { NX.toast('No se pudo comprar ahora'); return; }
+      r.chips -= d.cost;
+      r.spent += d.cost;
+      r.bought.push(d.id);
+      offers = offers.map((o, k) => (k === i ? Object.assign({}, o, { _sold: true }) : o));
+      try { ns.Audio.sfx('confirm'); } catch (_) { /* nada */ }
+      draw();
+    };
+    const reroll = () => {
+      if (r.chips < rerollCost) return;
+      r.chips -= rerollCost;
+      r.spent += rerollCost;
+      rerollCost++;
+      offers = P.pickW(eligible(r.player), 4, (d) => (d.weight == null ? 1 : d.weight));
+      try { ns.Audio.sfx('select'); } catch (_) { /* nada */ }
+      draw();
+    };
+    try { ns.Audio.sfx('levelup'); } catch (_) { /* nada */ }
+    P.hold.open((b) => { box = b; draw(); }, {
+      onClose: () => { r.open = false; box = null; },
+      key(e) {
+        const n = /^Digit([1-9])$/.exec(e.code) || /^Numpad([1-9])$/.exec(e.code);
+        if (n) buy(+n[1] - 1);
+        else if (e.code === 'KeyR') reroll();
+        else if (e.key === 'Escape' || e.key === 'Enter') P.hold.close();
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------- reloj
+  const every = () => { const v = +NX.store.get('shop:every', 4); return v > 0 ? v * 60 : 0; };
+  function start(p) {
+    run = null;
+    if (!NX.isOn(KEY) || !P.runOk()) return;
+    const e = every();
+    run = { player: p, chips: 0, credited: 0, bosses: p.bosses || 0, nextAt: e || Infinity, bossAt: 0, timers: [], visits: 0, spent: 0, bought: [], open: false };
+  }
+  function end(p) {
+    if (!run || run.player !== p) return;
+    const r = run;
+    run = null;
+    if (r.visits && ns.Game.state === 'over') P.overLine(`Tienda Nexus: ${r.bought.length} compra${r.bought.length === 1 ? '' : 's'} · ${r.spent} fichas gastadas`);
+  }
+  function tick() {
+    const r = act();
+    if (!r) return;
+    const p = r.player, t = T();
+    // Fichas por derrotas y jefes.
+    const k = p.kills || 0;
+    const due = Math.floor(k / KILLS_PER_CHIP);
+    if (due > r.credited) { r.chips += due - r.credited; r.credited = due; }
+    const b = p.bosses || 0;
+    if (b > r.bosses) {
+      r.chips += (b - r.bosses) * BOSS_CHIPS;
+      r.bosses = b;
+      if (NX.store.get('shop:boss', true)) r.bossAt = t + 1.5;
+    }
+    // Potenciadores que vencen.
+    for (let i = r.timers.length - 1; i >= 0; i--) {
+      const tm = r.timers[i];
+      if (t >= tm.until) { r.timers.splice(i, 1); try { tm.off(p); } catch (err) { NX.trip(KEY, err); } }
+    }
+    if (r.open || P.hold.active() || p.dead || ns.Game.state !== 'playing') return;
+    if (ns.Judgment && ns.Judgment.active) return;
+    const e = every();
+    if (r.nextAt === Infinity && e) r.nextAt = Math.ceil((t + 1) / e) * e;
+    if (e && t >= r.nextAt) { r.nextAt = (Math.floor(t / e) + 1) * e; r.bossAt = 0; open(r); return; }
+    if (r.bossAt && t >= r.bossAt) { r.bossAt = 0; open(r); }
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Tienda entre oleadas',
+    needs: (n) => n.Game && typeof n.Game.togglePause === 'function' && n.Pickups && typeof n.Pickups.pullAll === 'function' && n.Items && typeof n.Items.roll === 'function' && n.UI,
+    setup(n) {
+      ns = n;
+      NX.runs.on('start', (p) => { try { start(p); } catch (err) { NX.trip(KEY, err); } });
+      NX.runs.on('end', (p) => { try { end(p); } catch (err) { NX.trip(KEY, err); } });
+      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 250);
+      P.pill(KEY, () => {
+        const r = act();
+        if (!r) return '';
+        const e = every();
+        const left = e && r.nextAt !== Infinity ? Math.max(0, Math.ceil(r.nextAt - T())) : 0;
+        return `Fichas ${r.chips}` + (left ? ` · tienda en ${NX.fmtTime(left)}` : '');
+      });
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Tienda entre oleadas',
+    keywords: 'tienda fichas comprar ofertas curación mejora objeto temporal jefe oleadas progreso',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.select('Abrir la tienda cada', 'shop:every', [['0', 'Nunca (solo jefes)'], ['3', '3 minutos'], ['4', '4 minutos'], ['5', '5 minutos'], ['6', '6 minutos']], '4'));
+      el.appendChild(NX.ui.toggle('Abrir también al vencer a un jefe', 'shop:boss', true));
+      el.appendChild(NX.ui.note(`Se paga con Fichas Nexus de la partida: 1 por cada ${KILLS_PER_CHIP} derrotas y ${BOSS_CHIPS} por jefe. No usa ni cambia tus Pokémonedas. Solo en partidas normales, Modificadores e Infinito.`));
     },
   });
 })();
@@ -9265,6 +13546,458 @@ html.nx-sf-crt #nexus-crt{display:block}
         del.textContent = 'Pulsa otra vez para confirmar';
       });
       el.appendChild(del);
+    },
+  });
+})();
+
+// ---- features/tera.js
+// Teracristalización. Una vez por partida, la tecla T, el botón TERA del HUD o
+// su toque cambian el tipo del Pokémon al tipo Tera elegido (en los ajustes,
+// antes de la partida, o en un selector al activarla) con un efecto de
+// cristal: fragmentos que lo rodean y la joya Tera sobre la cabeza. Dura toda
+// la partida o los segundos que se elijan.
+//
+// Cómo se aplica: mon.types pasa a ser [tipo Tera] en un clon del mon (ver
+// pokemech-core.js) y se devuelve al terminar. Efectos en el juego:
+//  - Daño recibido: Types.mult usa el tipo Tera (como en la serie, la defensa
+//    pasa a ser la del tipo Tera puro).
+//  - Movimientos monoType: Player.monoType da su bono (MONO_K) solo si el mon
+//    tiene un único tipo igual al del movimiento. Con Tera, los movimientos
+//    del tipo Tera ganan ese bono y los del tipo original lo pierden, salvo
+//    que coincidan.
+//  - Subidas de nivel: Moves.poolFor lee mon.types, así que las cartas nuevas
+//    pueden incluir movimientos del tipo Tera mientras dura.
+//  - Clima (Weather.speedFor) y líquidos (World.liquidEffect) también miran
+//    los tipos: el tipo Tera decide inmunidades y ralentizaciones.
+//  - Upgrades (mejoras permanentes de la tienda) no dependen del tipo: sin cambios.
+(() => {
+  const KEY = 'tera';
+  const S_TYPE = 'pkm:tera:type', S_DUR = 'pkm:tera:dur';
+  let ns = null, pm = null, run = null, picker = null, pausedByUs = false;
+
+  NX.css(`#nexus-tera-pick{position:fixed;inset:0;z-index:99990;display:flex;align-items:center;justify-content:center;background:rgba(4,8,20,.55)}
+#nexus-tera-pick.hidden{display:none}
+#nexus-tera-pick .nx-tp-box{width:min(520px,calc(100vw - 20px));box-sizing:border-box;padding:12px 14px;color:#fff;background:linear-gradient(#24407f,#152a5c);
+  border:2px solid #f4f8ff;outline:2px solid #0b1838;border-radius:10px;box-shadow:inset 0 0 0 2px #5b83d6,0 6px 0 #0a1430;font:14px/1.3 var(--font,'Pixelify',system-ui,sans-serif)}
+#nexus-tera-pick h3{margin:0 0 8px;color:#bff4ff;font-size:18px;display:flex;justify-content:space-between;align-items:center}
+#nexus-tera-pick .nx-tp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}
+#nexus-tera-pick button{font:inherit;font-size:13px;min-height:40px;border-radius:8px;border:2px solid rgba(255,255,255,.85);color:#fff;cursor:pointer;text-shadow:0 1px 0 rgba(0,0,0,.6)}
+#nexus-tera-pick .nx-tp-x{background:#0b1838;min-height:34px;padding:0 12px}`);
+
+  const fixedType = () => { const t = NX.store.get(S_TYPE, 'ask'); return pm && pm.TYPES.includes(t) ? t : null; };
+
+  // ---------------------------------------------------------------- selector
+  function pauseGame() {
+    const G = ns.Game;
+    if (G.state === 'playing' && typeof G.togglePause === 'function') { try { G.togglePause(); pausedByUs = G.state === 'paused'; } catch (_) { pausedByUs = false; } }
+  }
+  function resumeGame() {
+    if (!pausedByUs) return;
+    pausedByUs = false;
+    const G = ns.Game;
+    if (G.state === 'paused' && typeof G.togglePause === 'function') { try { G.togglePause(); } catch (_) { /* queda en pausa */ } }
+  }
+  function openPicker() {
+    if (!picker) {
+      picker = document.createElement('div');
+      picker.id = 'nexus-tera-pick';
+      picker.className = 'hidden';
+      for (const ev of ['pointerdown', 'mousedown', 'touchstart', 'click', 'wheel']) picker.addEventListener(ev, (e) => e.stopPropagation());
+      picker.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-t]');
+        if (b) { const t = b.dataset.t; closePicker(); if (t !== 'x') activate(t); }
+        else if (e.target === picker) closePicker();
+      });
+      document.body.appendChild(picker);
+    }
+    picker.innerHTML = `<div class="nx-tp-box"><h3><span>Elige el tipo Tera</span><button type="button" class="nx-tp-x" data-t="x">Cancelar</button></h3>
+      <div class="nx-tp-grid">${pm.TYPES.map((t) => `<button type="button" data-t="${t}" style="background:${NX.esc(pm.typeColor(t))}">${NX.esc(pm.typeName(t))}</button>`).join('')}</div></div>`;
+    pauseGame();
+    picker.classList.remove('hidden');
+  }
+  function closePicker() {
+    if (picker) picker.classList.add('hidden');
+    resumeGame();
+  }
+  const pickerOpen = () => !!picker && !picker.classList.contains('hidden');
+
+  // ---------------------------------------------------------------- activación
+  function press() {
+    const p = run && run.p;
+    if (!p || p.dead || run.used) return;
+    const t = fixedType();
+    if (t) activate(t); else openPicker();
+  }
+  function activate(type) {
+    const p = run && run.p;
+    if (!p || p.dead || run.used || !pm.TYPES.includes(type) || NX.me() !== p) return;
+    const dur = Math.max(0, +NX.store.get(S_DUR, 0) || 0);
+    pm.setMod(p, KEY, { prio: 10, mon(c) { c.types = [type]; c.tera = type; } });
+    run.used = true;
+    run.active = { type, t: dur || Infinity, dur, t0: performance.now(), col: pm.typeColor(type) };
+    const col = run.active.col;
+    pm.sfx('shiny');
+    pm.kick(0.6);
+    pm.flash(col, 0.45, 0.45);
+    pm.bigText('¡Teracristalización!', col, 'Tipo Tera: ' + pm.typeName(type));
+    try {
+      ns.FX.ring(p.x, p.y, 6, 80, '#ffffff', 0.5, 4);
+      ns.FX.ring(p.x, p.y, 10, 120, col, 0.7, 5);
+      ns.FX.burst(p.x, p.y - p.bodyH * 0.5, col, 24, 180);
+      ns.FX.burst(p.x, p.y - p.bodyH * 0.5, '#e8fbff', 14, 140);
+    } catch (_) { /* sin efectos */ }
+  }
+  function revert(quiet) {
+    const p = run && run.p;
+    if (!run || !run.active) return;
+    run.active = null;
+    if (!p) return;
+    pm.clearMod(p, KEY);
+    if (!quiet) {
+      try { ns.FX.burst(p.x, p.y - p.bodyH * 0.5, '#e8fbff', 16, 150); } catch (_) { /* nada */ }
+      NX.toast('La Teracristalización terminó');
+    }
+  }
+  function tick(dt, p) {
+    if (!run || run.p !== p || !run.active) return;
+    run.active.t -= dt;
+    if (run.active.t <= 0 || !pm.hasMod(p, KEY)) revert();
+  }
+
+  // ---------------------------------------------------------------- cristal
+  function shard(ctx, x, y, s, rot, col, a) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.globalAlpha = a;
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 1.6);
+    ctx.lineTo(s * 0.7, 0);
+    ctx.lineTo(0, s * 1.1);
+    ctx.lineTo(-s * 0.7, 0);
+    ctx.closePath();
+    ctx.fillStyle = col;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,.9)';
+    ctx.stroke();
+    ctx.globalAlpha = a * 0.8;
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 1.6);
+    ctx.lineTo(s * 0.25, -s * 0.2);
+    ctx.lineTo(-s * 0.3, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  function drawCrystal(ctx, p, front) {
+    const a = run.active, now = performance.now() / 1000, col = a.col;
+    const k = Math.min(1, (performance.now() - a.t0) / 450);
+    const N = 8, rx = p.r * 1.7, ry = p.r * 0.75;
+    if (!front) pm.ellipseGlow(ctx, p.x, p.y, p.r * 2.2, p.r * 1, col, 0.45 * k);
+    for (let i = 0; i < N; i++) {
+      const ang = now * 0.8 + (i * Math.PI * 2) / N;
+      const isFront = Math.sin(ang) > 0;
+      if (isFront !== front) continue;
+      const x = p.x + Math.cos(ang) * rx, y = p.y - p.bodyH * (0.25 + 0.35 * ((i % 3) / 2)) + Math.sin(ang) * ry;
+      shard(ctx, x, y, 3.2 + (i % 3), Math.cos(ang) * 0.4, col, (front ? 0.75 : 0.5) * k);
+    }
+    if (!front) return;
+    // Joya Tera sobre la cabeza.
+    const hx = p.x, hy = p.y - p.bodyH - 13 + Math.sin(now * 2.5) * 1.5;
+    ctx.save();
+    ctx.globalAlpha = k;
+    ctx.translate(hx, hy);
+    ctx.beginPath();
+    ctx.moveTo(-9, -2); ctx.lineTo(-5, -8); ctx.lineTo(5, -8); ctx.lineTo(9, -2); ctx.lineTo(0, 8); ctx.closePath();
+    ctx.fillStyle = col;
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(11,24,56,.9)';
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.9)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-9, -2); ctx.lineTo(9, -2); ctx.moveTo(-5, -8); ctx.lineTo(-2, -2); ctx.lineTo(0, 8); ctx.moveTo(5, -8); ctx.lineTo(2, -2); ctx.lineTo(0, 8);
+    ctx.stroke();
+    ctx.globalAlpha = k * (0.5 + 0.5 * Math.sin(now * 4));
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-4, -6, 2, 2);
+    ctx.restore();
+  }
+  function drawables() {
+    const p = run && run.p;
+    if (!p || !run.active || p !== NX.me()) return null;
+    return [{ y: p.y - 0.4, draw: (ctx) => drawCrystal(ctx, p, false) }, { y: p.y + 0.4, draw: (ctx) => drawCrystal(ctx, p, true) }];
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Teracristalización',
+    needs: (n) => !!NX.pm && NX.featureList().some((f) => f.key === 'pokemech' && f.status === 'ok') && n.Game && n.Types,
+    setup(n) {
+      ns = n;
+      pm = NX.pm;
+      pm.onRun('start', (p) => { run = { p, used: false, active: null }; });
+      pm.onRun('end', () => { run = null; if (pickerOpen()) closePicker(); pausedByUs = false; });
+      pm.onTick(KEY, tick);
+      pm.drawables(KEY, drawables);
+      pm.button({
+        id: KEY, feat: KEY, label: 'TERA', title: 'Teracristalización', key: 'T', keyCode: 'KeyT', color: '#7fe8ff',
+        state() {
+          const p = run && run.p;
+          if (!p || p !== NX.me() || !pm.allowed()) return null;
+          if (run.active) return { show: true, color: run.active.col, active: run.active.dur ? NX.clamp(run.active.t / run.active.dur, 0, 1) : 1 };
+          if (run.used) return null;
+          const t = fixedType();
+          return { show: true, ready: !p.dead, frac: 1, color: t ? pm.typeColor(t) : '#7fe8ff' };
+        },
+        run: press,
+      });
+      NX.keys.bind((e) => e.key === 'Escape' && pickerOpen(), () => { closePicker(); return true; });
+      setInterval(() => { if (run && run.active && !NX.isOn(KEY)) revert(true); }, 500);
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Teracristalización',
+    keywords: 'tera teracristal teracristalizacion tipo cristal joya',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      const types = (NX.pm && NX.pm.TYPES) || [];
+      el.appendChild(NX.ui.select('Tipo Tera', S_TYPE, [['ask', 'Elegir al activarla'], ...types.map((t) => [t, NX.pm.typeName(t)])], 'ask'));
+      el.appendChild(NX.ui.select('Duración', S_DUR, [['0', 'Toda la partida'], ['30', '30 s'], ['60', '60 s'], ['120', '2 min']], '0'));
+      el.appendChild(NX.ui.note('T o el botón TERA, una vez por partida. El Pokémon pasa a ser del tipo Tera puro: cambia el daño que recibe, los movimientos de ese tipo ganan el bono de tipo único (los del tipo original lo pierden si no coinciden) y las cartas de subida de nivel pueden traer movimientos del tipo Tera. Las mejoras permanentes no cambian.'));
+    },
+  });
+})();
+
+// ---- features/terrains.js
+// Terrenos con efectos: zonas temporales que aparecen en el mapa durante la
+// partida. Campo eléctrico (acelera), niebla (reduce la visión), hierba
+// curativa (cura despacio) y campo psíquico (frena proyectiles y enemigos).
+// Se dibujan bajo el HUD (hudLayers.under) y su efecto se aplica al jugador
+// cada 100 ms con el reloj del juego, así que respetan la pausa. Al terminar
+// la partida las zonas desaparecen; los efectos son mejoras breves del juego
+// (addBuff, heal, applySlow) que caducan solas.
+(() => {
+  const KEY = 'terrains';
+  const KINDS = {
+    electric: { name: 'Campo eléctrico', col: '#ffd23f', dark: '#b8860b', fill: 'rgba(255,210,63,.13)', note: 'acelera' },
+    fog: { name: 'Niebla espesa', col: '#d8dde6', dark: '#7d8696', fill: 'rgba(200,206,218,.20)', note: 'reduce la visión' },
+    grass: { name: 'Hierba curativa', col: '#5fe08a', dark: '#1f8f4d', fill: 'rgba(95,224,138,.14)', note: 'cura despacio' },
+    psychic: { name: 'Campo psíquico', col: '#ff7bd5', dark: '#a03d84', fill: 'rgba(255,123,213,.13)', note: 'frena proyectiles y enemigos' },
+  };
+  const ORDER = Object.keys(KINDS);
+  const MAX = 3;
+  const LIFE = 45;
+
+  let ns = null, zones = [], nextT = 0, lastT = null, runP = null, healAcc = 0, inFog = 0;
+  const opt = (k, d) => NX.store.get('terrain:' + k, d);
+  const on = () => NX.isOn(KEY);
+  const kindOn = (k) => opt(k, true) !== false;
+
+  function reset() { zones = []; lastT = null; nextT = 0; healAcc = 0; inFog = 0; }
+
+  // Punto de suelo libre a cierta distancia del jugador (dentro de la arena si la hay).
+  function spot(p, dMin, dMax, rad) {
+    const W = ns.World, TS = W.TS || 32, A = W.arena;
+    for (let i = 0; i < 16; i++) {
+      const a = Math.random() * Math.PI * 2, d = dMin + Math.random() * (dMax - dMin);
+      const x = p.x + Math.cos(a) * d, y = p.y + Math.sin(a) * d;
+      if (A) {
+        const cx = A.tx * TS + TS / 2, cy = A.ty * TS + TS / 2;
+        if (Math.hypot(x - cx, y - cy) > (A.r - 3) * TS - rad * 0.5) continue;
+      }
+      if (W.kindAt(x, y) !== 'floor') continue;
+      if (W.isFree && !W.isFree(x, y, 14)) continue;
+      return [x, y];
+    }
+    return null;
+  }
+
+  function spawn(p, t, kind) {
+    const list = ORDER.filter(kindOn);
+    if (!list.length) return null;
+    const k = kind && KINDS[kind] ? kind : list[Math.floor(Math.random() * list.length)];
+    const r = 115 + Math.random() * 45;
+    const at = spot(p, kind ? 60 : 240, kind ? 140 : 520, r);
+    if (!at) return null;
+    const z = { kind: k, x: at[0], y: at[1], r, t0: t, life: LIFE, seed: Math.random() * 1000 };
+    zones.push(z);
+    return z;
+  }
+
+  const inside = (z, x, y) => (x - z.x) * (x - z.x) + (y - z.y) * (y - z.y) <= z.r * z.r;
+
+  function tick() {
+    if (!ns || !on() || (ns.Coop && ns.Coop.active)) { if (zones.length) reset(); return; }
+    const G = ns.Game, p = NX.me();
+    if (!NX.inRun() || !p) { if (zones.length) reset(); runP = null; return; }
+    if (p !== runP) { runP = p; reset(); }
+    if (G.state !== 'playing') return;
+    if ((ns.Judgment && ns.Judgment.active) || (ns.Rift && ns.Rift.inArena)) { zones = []; return; }
+    const t = G.st.time || 0;
+    const dt = lastT == null ? 0 : Math.max(0, Math.min(0.5, t - lastT));
+    lastT = t;
+    zones = zones.filter((z) => t - z.t0 < z.life);
+    if (!nextT) nextT = t + 25 + Math.random() * 15;
+    if (t >= nextT) {
+      const every = +opt('freq', 45);
+      nextT = t + every * (0.75 + Math.random() * 0.5);
+      if (zones.length < MAX) spawn(p, t);
+    }
+    if (!zones.length || p.dead) { inFog = Math.max(0, inFog - dt * 2); return; }
+    let fog = false;
+    for (const z of zones) {
+      const me = inside(z, p.x, p.y);
+      if (z.kind === 'electric' && me && typeof p.addBuff === 'function') p.addBuff('spd', 0.35, 0.35, 1);
+      else if (z.kind === 'grass' && me && p.hp < p.maxHp) {
+        healAcc += dt;
+        if (healAcc >= 1) { healAcc -= 1; try { p.heal(Math.max(1, p.maxHp * 0.02)); } catch (_) { /* nada */ } }
+      } else if (z.kind === 'fog' && me) fog = true;
+      else if (z.kind === 'psychic') {
+        for (const q of ns.Projectiles.all()) {
+          if (q.friendly || q.__nxPsy || !inside(z, q.x, q.y)) continue;
+          q.__nxPsy = 1;
+          if (typeof q.vx === 'number') { q.vx *= 0.4; q.vy *= 0.4; }
+        }
+        for (const e of ns.EnemyMgr.all()) {
+          if (!e.dead && !e.arceus && inside(z, e.x, e.y) && typeof e.applySlow === 'function') e.applySlow(0.35, 0.4);
+        }
+      }
+    }
+    inFog = fog ? Math.min(1, inFog + dt * 2.5) : Math.max(0, inFog - dt * 2);
+  }
+
+  // ---------------------------------------------------------------- dibujo
+  function drawZone(g, z, now, S) {
+    const K = KINDS[z.kind];
+    const [sx, sy] = NX.toScreen(z.x, z.y);
+    const R = z.r * S;
+    const G = ns.Game, t = G.st.time || 0;
+    const left = z.life - (t - z.t0);
+    if (left <= 0) return;
+    let a = Math.min(1, (t - z.t0) / 0.6);
+    if (left < 6) a *= 0.45 + 0.55 * Math.abs(Math.sin(now / 140));
+    g.globalAlpha = a;
+    g.fillStyle = K.fill;
+    g.beginPath(); g.arc(sx, sy, R, 0, Math.PI * 2); g.fill();
+    // Borde en segmentos, al estilo pixel.
+    const px = Math.max(2, Math.round(2 * S));
+    const n = Math.max(24, Math.round(R / 7));
+    const rot = now / (z.kind === 'psychic' ? 1400 : 3000);
+    for (let i = 0; i < n; i++) {
+      if (i % 2) continue;
+      const ang = rot + (i / n) * Math.PI * 2;
+      const x = Math.round(sx + Math.cos(ang) * R), y = Math.round(sy + Math.sin(ang) * R);
+      g.fillStyle = K.dark; g.fillRect(x - px, y - px, px * 2 + 1, px * 2 + 1);
+      g.fillStyle = K.col; g.fillRect(x - px + 1, y - px + 1, px * 2 - 1, px * 2 - 1);
+    }
+    // Detalles dentro de la zona.
+    const m = 9;
+    for (let i = 0; i < m; i++) {
+      const h = Math.sin(z.seed + i * 12.9898) * 43758.5453;
+      const fr = h - Math.floor(h);
+      const ang = i * 2.399 + z.seed;
+      const rr = R * (0.18 + 0.7 * fr);
+      const x = Math.round(sx + Math.cos(ang) * rr), y = Math.round(sy + Math.sin(ang) * rr);
+      const ph = now / 260 + i;
+      if (z.kind === 'electric') {
+        if (Math.sin(ph * 1.7) < 0.2) continue;
+        g.fillStyle = K.col;
+        g.fillRect(x, y, px, px * 2); g.fillRect(x + px, y + px * 2, px, px * 2); g.fillRect(x, y + px * 4, px, px * 2);
+      } else if (z.kind === 'grass') {
+        g.fillStyle = K.dark; g.fillRect(x, y, px, px * 3);
+        g.fillStyle = K.col; g.fillRect(x - px, y + px, px, px * 2); g.fillRect(x + px, y + px, px, px * 2);
+        if (Math.sin(ph) > 0.6) { g.fillStyle = '#ffffff'; g.fillRect(x, y - px * 2 - Math.round((ph % 1) * 4), px, px); }
+      } else if (z.kind === 'psychic') {
+        const o = Math.sin(ph) * 3 * px;
+        g.fillStyle = K.col; g.fillRect(x - px, y + o, px * 2, px * 2);
+        g.fillStyle = '#ffffff'; g.fillRect(x - px + 1, y + o + 1, px - 1, px - 1);
+      } else {
+        const o = Math.sin(ph * 0.6) * 6 * px;
+        g.fillStyle = 'rgba(230,234,242,.55)';
+        g.fillRect(x - px * 4 + o, y - px, px * 8, px * 2);
+        g.fillRect(x - px * 2 + o, y - px * 2, px * 4, px);
+      }
+    }
+    // Nombre corto al estar cerca.
+    const p = NX.me();
+    if (p && Math.hypot(p.x - z.x, p.y - z.y) < z.r * 1.6) {
+      g.font = `${Math.round(11 * Math.min(1.4, S))}px Pixelify, system-ui, sans-serif`;
+      g.textAlign = 'center';
+      g.lineWidth = 3;
+      g.strokeStyle = '#0b1838';
+      g.strokeText(K.name, sx, sy - R - 6);
+      g.fillStyle = K.col;
+      g.fillText(K.name, sx, sy - R - 6);
+    }
+    g.globalAlpha = 1;
+  }
+
+  function draw(g, w, h) {
+    if (!ns || !zones.length || !NX.inRun()) return;
+    const C = ns.Camera, S = C.scale || 1, now = performance.now();
+    const L = C.left(), T = C.top();
+    for (const z of zones) {
+      if (z.x + z.r < L || z.x - z.r > L + C.w || z.y + z.r < T || z.y - z.r > T + C.h) continue;
+      drawZone(g, z, now, S);
+    }
+    if (inFog > 0.01) {
+      const p = NX.me();
+      if (!p) return;
+      const [px, py] = NX.toScreen(p.x, p.y - (p.bodyH || 30) / 2);
+      const r0 = 70 * S, r1 = 190 * S;
+      const gr = g.createRadialGradient(px, py, r0, px, py, r1);
+      gr.addColorStop(0, 'rgba(196,202,214,0)');
+      gr.addColorStop(1, `rgba(196,202,214,${0.93 * inFog})`);
+      g.fillStyle = gr;
+      g.fillRect(0, 0, w, h);
+    }
+  }
+
+  // Marcadores para el minimapa u otros módulos (lectura perezosa).
+  NX.mapMarkers = NX.mapMarkers || [];
+  NX.mapMarkers.push({
+    key: KEY,
+    list: () => (on() && NX.inRun() ? zones.map((z) => ({ x: z.x, y: z.y, r: z.r, color: KINDS[z.kind].col, shape: 'zone', label: KINDS[z.kind].name })) : []),
+  });
+
+  NX.terrains = {
+    // Crea una zona junto al jugador (para probar o para otros módulos).
+    spawn(kind) { const p = NX.me(); if (!ns || !p) return null; return spawn(p, ns.Game.st.time || 0, kind); },
+    list: () => zones.map((z) => ({ ...z })),
+    clear: reset,
+  };
+
+  NX.hudLayers.push({ key: KEY, under: draw });
+
+  NX.feature({
+    key: KEY,
+    label: 'Terrenos con efectos',
+    needs: (n) => n.World && typeof n.World.kindAt === 'function' && n.Projectiles && typeof n.Projectiles.all === 'function' &&
+      n.EnemyMgr && typeof n.EnemyMgr.all === 'function' && n.Camera && typeof n.Camera.left === 'function' && n.Game && n.Game.st,
+    setup(n) {
+      ns = n;
+      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 100);
+      NX.runs.on('end', () => { reset(); runP = null; });
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Terrenos con efectos',
+    keywords: 'terreno zona campo eléctrico niebla hierba psíquico velocidad curación visión proyectiles',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.note('Zonas temporales en el mapa. Duran ' + LIFE + ' s y hay como máximo ' + MAX + ' a la vez.'));
+      for (const k of ORDER) el.appendChild(NX.ui.toggle(`${KINDS[k].name} (${KINDS[k].note})`, 'terrain:' + k, true));
+      el.appendChild(NX.ui.range('Una zona nueva cada', 'terrain:freq', 20, 120, 5, 45, (v) => '~' + v + ' s'));
     },
   });
 })();
@@ -10037,6 +14770,223 @@ html.nx-th #nexus-fab{background:var(--box2);outline-color:var(--edge-out)}
     render(el) {
       el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
       el.appendChild(NX.ui.note('Agrega un botón junto al selector de Pokémon en Mejoras. Muestra el costo total y pide confirmación antes de comprar.'));
+    },
+  });
+})();
+
+// ---- features/zmove.js
+// Movimientos Z. Un ataque definitivo por partida (o recargable, según el
+// ajuste) que se carga con el daño hecho. Al llenarse, la tecla Z, el botón Z
+// del HUD o su toque lo lanzan: el Pokémon se carga un instante (invulnerable),
+// aparece el nombre del movimiento Z del tipo de su movimiento principal y
+// estalla en una gran área alrededor con un efecto propio por tipo (onda,
+// vórtice o impactos). El daño sale del ataque del jugador con ese movimiento
+// (Player.atkFor) multiplicado por la potencia Z y por la tabla de tipos.
+(() => {
+  const KEY = 'zmove';
+  const S_USES = 'pkm:z:uses', S_POW = 'pkm:z:pow';
+  // tipo -> [nombre, radio, forma]
+  const Z = {
+    normal: ['Carrera Arrolladora', 250, 'nova'], fire: ['Hecatombe Pírica', 280, 'nova'], water: ['Hidrovórtice Abisal', 270, 'vortex'],
+    grass: ['Megatón Floral', 260, 'strikes'], electric: ['Gigavoltio Destructor', 270, 'strikes'], ice: ['Crioaliento Despiadado', 260, 'vortex'],
+    fighting: ['Ráfaga Demoledora', 240, 'nova'], poison: ['Diluvio Ácido', 260, 'strikes'], ground: ['Barrena Telúrica', 290, 'nova'],
+    flying: ['Picado Supersónico', 260, 'vortex'], psychic: ['Disruptor Psíquico', 270, 'strikes'], bug: ['Guadaña Sedosa', 250, 'vortex'],
+    rock: ['Aplastamiento Gigalítico', 280, 'strikes'], ghost: ['Presa Espectral', 260, 'vortex'], dragon: ['Dracoaliento Devastador', 280, 'vortex'],
+    dark: ['Agujero Negro Aniquilador', 270, 'vortex'], steel: ['Hiperembestida Metálica', 250, 'nova'], fairy: ['Arrumaco Sideral', 260, 'strikes'],
+  };
+  let ns = null, pm = null, run = null;
+
+  const mainMove = (p) => {
+    try { const m = p.activeMove && p.activeMove(); if (m) return m; } catch (_) { /* nada */ }
+    return (p.slots && p.slots[0] && p.slots[0][0]) || null;
+  };
+
+  function activate() {
+    const p = run && run.p;
+    if (!p || p.dead || run.cast || run.spent) return;
+    if (!run.charge.full) { NX.toast('La barra Z aún no está llena'); return; }
+    const mv = mainMove(p);
+    const type = (mv && Z[mv.type] ? mv.type : (p.mon.types || [])[0]) || 'normal';
+    const [name, radius, shape] = Z[type] || Z.normal;
+    const col = pm.typeColor(type);
+    run.cast = { t: 0, type, name, radius, shape, col, mv, x: p.x, y: p.y, hit: false, seeds: [] };
+    for (let i = 0; i < 9; i++) run.cast.seeds.push([Math.random() * Math.PI * 2, 0.25 + Math.random() * 0.7, Math.random() * 0.35]);
+    run.charge.reset();
+    if (NX.store.get(S_USES, 'once') === 'once') run.spent = true;
+    p.invuln = Math.max(p.invuln || 0, 1.6);
+    pm.sfx('reveal');
+    pm.bigText(name, col, 'Movimiento Z · ' + pm.typeName(type), 2.4);
+  }
+
+  function impact(p, c) {
+    c.hit = true;
+    c.x = p.x; c.y = p.y;
+    const pow = NX.clamp(+NX.store.get(S_POW, 12) || 12, 4, 40);
+    const mv = c.mv || { dmg: 20, cat: 'special', type: c.type };
+    let base = 20;
+    try { base = (p.atkFor ? p.atkFor(mv) : p.atk) * (mv.dmg || 20); } catch (_) { base = 20; }
+    const targets = ns.EnemyMgr.queryCircle(c.x, c.y, c.radius);
+    for (const e of targets) {
+      if (!e || e.dead || e.remote) continue;
+      let k = 1;
+      try { k = ns.Types.mult(c.type, e.types); } catch (_) { k = 1; }
+      const dx = e.x - c.x, dy = e.y - c.y;
+      try { e.hurt(base * pow * k, c.col, dx, dy, 160); } catch (err) { NX.trip(KEY, err); }
+    }
+    pm.sfx('quake');
+    pm.kick(1.4);
+    pm.flash(c.col, 0.6, 0.5);
+    try {
+      ns.FX.ring(c.x, c.y, 10, c.radius, c.col, 0.7, 7);
+      ns.FX.ring(c.x, c.y, 6, c.radius * 0.7, '#ffffff', 0.5, 4);
+      ns.FX.burst(c.x, c.y - 10, c.col, 40, 320);
+      ns.FX.burst(c.x, c.y - 10, '#ffffff', 18, 220);
+      ns.FX.dmgText(c.x, c.y - p.bodyH - 18, c.name, c.col, true);
+    } catch (_) { /* sin efectos */ }
+  }
+
+  function tick(dt, p) {
+    if (!run || run.p !== p) return;
+    const c = run.cast;
+    if (!c) { if (!run.spent) run.charge.update(p); return; }
+    c.t += dt;
+    if (!c.hit && c.t >= 0.7) impact(p, c);
+    if (c.t >= 1.8) run.cast = null;
+  }
+
+  // ---------------------------------------------------------------- dibujo
+  function drawZ(ctx, x, y, s, col, a) {
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.translate(x, y);
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-s, -s); ctx.lineTo(s, -s); ctx.lineTo(-s * 0.6, s * 0.75); ctx.lineTo(s, s * 0.75); ctx.lineTo(s, s); ctx.lineTo(-s, s); ctx.lineTo(s * 0.6, -s * 0.75); ctx.lineTo(-s, -s * 0.75); ctx.closePath();
+    ctx.fillStyle = col;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    ctx.restore();
+  }
+  function drawCast(ctx, p) {
+    const c = run.cast, now = performance.now() / 1000;
+    if (!c.hit) {
+      // Carga: líneas de energía que convergen y la Z sobre la cabeza.
+      const f = c.t / 0.7;
+      pm.ellipseGlow(ctx, p.x, p.y - p.bodyH * 0.5, 30 + 50 * f, 30 + 50 * f, c.col, 0.6);
+      ctx.save();
+      ctx.strokeStyle = c.col;
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 12; i++) {
+        const ang = i * 0.5236 + now * 2, r0 = 140 * (1 - f) + 20, r1 = r0 + 26;
+        ctx.globalAlpha = 0.4 + 0.6 * f;
+        ctx.beginPath();
+        ctx.moveTo(p.x + Math.cos(ang) * r1, p.y - p.bodyH * 0.5 + Math.sin(ang) * r1 * 0.6);
+        ctx.lineTo(p.x + Math.cos(ang) * r0, p.y - p.bodyH * 0.5 + Math.sin(ang) * r0 * 0.6);
+        ctx.stroke();
+      }
+      ctx.restore();
+      drawZ(ctx, p.x, p.y - p.bodyH - 18, 7 + 3 * f, c.col, 1);
+      return;
+    }
+    const f = Math.min(1, (c.t - 0.7) / 1.1), R = c.radius, a = 1 - f;
+    // Suelo: onda que se expande.
+    ctx.save();
+    ctx.globalAlpha = 0.5 * a;
+    const g = ctx.createRadialGradient(c.x, c.y, R * f * 0.2, c.x, c.y, R * (0.3 + 0.7 * f));
+    g.addColorStop(0, 'rgba(255,255,255,0)');
+    g.addColorStop(0.75, c.col);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(c.x, c.y, R * (0.3 + 0.7 * f), R * (0.3 + 0.7 * f) * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    if (c.shape === 'vortex') {
+      ctx.strokeStyle = c.col;
+      ctx.lineWidth = 5 * a + 1;
+      for (let arm = 0; arm < 4; arm++) {
+        ctx.globalAlpha = 0.8 * a;
+        ctx.beginPath();
+        for (let s = 0; s <= 24; s++) {
+          const q = s / 24, ang = arm * 1.5708 + q * 4 + now * 5, rr = R * q * (0.4 + 0.6 * f);
+          const x = c.x + Math.cos(ang) * rr, y = c.y - 8 + Math.sin(ang) * rr * 0.55;
+          if (s) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+      }
+    } else if (c.shape === 'strikes') {
+      for (const [ang, d, delay] of c.seeds) {
+        const q = NX.clamp((f - delay) / 0.4, 0, 1);
+        if (q <= 0 || q >= 1) continue;
+        const x = c.x + Math.cos(ang) * R * d, y = c.y + Math.sin(ang) * R * d * 0.55;
+        ctx.globalAlpha = 1 - q;
+        ctx.fillStyle = c.col;
+        ctx.fillRect(x - 5, y - 220, 10, 220);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(x - 2, y - 220, 4, 220);
+        pm.ellipseGlow(ctx, x, y, 34, 18, c.col, 0.9 * (1 - q));
+      }
+    } else {
+      for (let i = 0; i < 3; i++) {
+        const q = NX.clamp(f * 1.3 - i * 0.15, 0, 1);
+        ctx.globalAlpha = (1 - q) * 0.9;
+        ctx.strokeStyle = i === 1 ? '#ffffff' : c.col;
+        ctx.lineWidth = 8 * (1 - q) + 1;
+        ctx.beginPath();
+        ctx.ellipse(c.x, c.y, R * q, R * q * 0.55, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+    if (f < 0.5) drawZ(ctx, c.x, c.y - p.bodyH - 18 - f * 40, 10, c.col, 1 - f * 2);
+  }
+  function drawables() {
+    const p = run && run.p;
+    if (!p || !run.cast || p !== NX.me()) return null;
+    return [{ y: p.y + 1, draw: (ctx) => drawCast(ctx, p) }];
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Movimientos Z',
+    needs: (n) => !!NX.pm && NX.featureList().some((f) => f.key === 'pokemech' && f.status === 'ok') && n.Types && typeof n.Types.mult === 'function',
+    setup(n) {
+      ns = n;
+      pm = NX.pm;
+      pm.onRun('start', (p) => { run = { p, charge: pm.charge(60, 600), cast: null, spent: false }; });
+      pm.onRun('end', () => { run = null; });
+      pm.onTick(KEY, tick);
+      pm.drawables(KEY, drawables);
+      pm.button({
+        id: KEY, feat: KEY, label: 'Z', title: 'Movimiento Z', key: 'Z', keyCode: 'KeyZ', color: '#ffe066',
+        state() {
+          const p = run && run.p;
+          if (!p || p !== NX.me() || !pm.allowed()) return null;
+          if (run.cast) return { show: true, active: 1, color: run.cast.col };
+          if (run.spent) return null;
+          const mv = mainMove(p);
+          const col = pm.typeColor(mv && mv.type);
+          return { show: true, ready: run.charge.full && !p.dead, frac: run.charge.frac, color: col };
+        },
+        run: activate,
+        fill: () => run && run.charge.fill(),
+      });
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Movimientos Z',
+    keywords: 'z movimiento definitivo ataque area carga cristal',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.select('Usos', S_USES, [['once', 'Uno por partida'], ['recharge', 'Se recarga con el daño']], 'once'));
+      el.appendChild(NX.ui.range('Potencia', S_POW, 4, 30, 1, 12, (v) => 'x' + v));
+      el.appendChild(NX.ui.note('Z o el botón Z cuando la barra está llena (se carga con el daño hecho, más o menos un minuto de combate). Usa el tipo del movimiento activo: estalla en una gran área alrededor y su daño sale del ataque del jugador con ese movimiento por la potencia elegida y la tabla de tipos.'));
     },
   });
 })();

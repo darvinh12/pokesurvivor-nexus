@@ -15,7 +15,7 @@
   const num = (v, d = 0) => (+v || 0).toLocaleString('es-VE', { maximumFractionDigits: d });
 
   const st = Object.assign({ q: '', type: '', gen: '', tier: '', own: false, sort: 'nexus', sel: 0, tm: false }, NX.store.get('bc:state', {}));
-  const save = () => NX.store.set('bc:state', { type: st.type, gen: st.gen, tier: st.tier, own: st.own, sort: st.sort, sel: st.sel, tm: st.tm });
+  const save = () => NX.store.set('bc:state', { type: st.type, gen: st.gen, tier: st.tier, own: st.own, sort: st.sort, sel: st.sel, tm: st.tm, style: st.style });
 
   NX.css(`#nexus-bc{z-index:61}
 #nexus-bc .nx-bc-box{width:min(1120px,100%);max-height:calc(100vh - 60px);max-height:calc(100dvh - 60px);display:flex;flex-direction:column;gap:8px;padding:14px 16px;overflow:hidden;box-sizing:border-box}
@@ -221,13 +221,16 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
   const moveChip = (G, id, hit) => { const d = G.moveDef(id); return `<span class="${hit ? 'hit' : ''}" style="background:${esc(G.typeColor(d && d.type))}" title="${esc(d ? G.tr(d.desc) : id)}">${esc(G.moveName(id))}</span>`; };
 
   function nexusSec(G, r, x) {
-    if (!x) return '<section class="panel nx-bc-sec"><h4>Build Nexus</h4><p class="nx-bc-p">No se pudo calcular.</p></section>';
+    // Como la guía de SurvivorTiers: la mejor build, o la mejor a distancia o cuerpo a cuerpo.
+    const styleChips = [['', 'Mejor'], ['ranged', 'A distancia'], ['melee', 'Cuerpo a cuerpo']]
+      .map(([k, t]) => `<button type="button" class="chip${(st.style || '') === k ? ' on' : ''}" data-style="${k}">${t}</button>`).join('');
+    if (!x) return `<section class="panel nx-bc-sec"><h4><span>Build Nexus</span><span>${styleChips}</span></h4><p class="nx-bc-p">${st.style === 'melee' ? 'Este Pokémon no tiene una build cuerpo a cuerpo posible.' : 'No se pudo calcular.'}</p></section>`;
     const mv = x.moves.map((m) => `<div class="nx-bc-mv"><span class="mn" style="background:${esc(G.typeColor(m.type))}">${esc(m.name)}${m.tm ? ' <i>MT</i>' : ''}${m.evoName ? `<i>evoluciona con ${esc(m.evoName)}</i>` : ''}</span><small>${esc(m.why)}</small></div>`).join('');
     const start = x.start ? (x.startIn ? `Empieza con <b>${esc(x.startName)}</b>, que ya está en la build.` : `Su movimiento inicial es <b>${esc(x.startName)}</b>: con la mejora de inicio del Pokémon puedes empezar con uno de la build.`) : '';
     const evo = x.evoNeeds.length ? `Para evolucionar los movimientos, toma ${esc(x.evoNeeds.join(', '))} cuando estén al nivel máximo.` : '';
     const tmNote = st.tm ? (x.usedTM ? 'Incluye MT que este Pokémon puede aprender.' : 'Con sus MT la mejor build no cambia.') : '';
     return `<section class="panel nx-bc-sec"><h4><span>Build Nexus ${tierBadge(r.tier)} <small class="nx-bc-cnt">puntuación ${r.score} · puesto ${r.rank}</small></span>
-        <button type="button" class="chip${st.tm ? ' on' : ''}" data-tm title="Permitir MT en la build">Con MT</button></h4>
+        <span>${styleChips}<button type="button" class="chip${st.tm ? ' on' : ''}" data-tm title="Permitir MT en la build">Con MT</button></span></h4>
       ${mv}
       <div class="nx-bc-bars">${barRow('Daño en grupo', r.pct.crowd, 'Percentil frente a todos los Pokémon')}${barRow('Daño a jefes', r.pct.boss, 'Percentil frente a todos los Pokémon')}${barRow('Aguante', r.pct.surv, 'Percentil frente a todos los Pokémon')}</div>
       <p class="nx-bc-p">Al final de la partida: reducción de daño ${Math.round(x.late.red * 100)} %, control ${Math.round(x.late.ctrl * 100)} %, invulnerable ${Math.round(x.late.dodge * 100)} % del tiempo, regeneración ${num(x.late.regen, 1)} PS/s.</p>
@@ -284,7 +287,7 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
     let chips = '';
     try { chips = N.UI.typeChips(p.types); } catch (_) { chips = p.types.map(G.typeChip).join(''); }
     let x = null;
-    try { x = NX.buildModel.explain(dex, { tm: st.tm }); } catch (err) { NX.trip(KEY, err); }
+    try { x = NX.buildModel.explain(dex, { tm: st.tm, style: st.style || undefined }); } catch (err) { NX.trip(KEY, err); }
     const nexusMoves = x ? x.moves.map((m) => m.id) : r.moves;
     const lab = labApi();
     right.innerHTML = `<button type="button" class="btn small ghost nx-bc-back" data-back>‹ Volver a la lista</button>
@@ -299,6 +302,7 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
     right.querySelector('[data-back]').addEventListener('click', () => scr.querySelector('.nx-bc-box').classList.remove('det'));
     const tm = right.querySelector('[data-tm]');
     if (tm) tm.addEventListener('click', () => { st.tm = !st.tm; save(); renderDetail(); });
+    right.querySelectorAll('[data-style]').forEach((b) => b.addEventListener('click', () => { st.style = b.dataset.style; save(); renderDetail(); }));
     const lb = right.querySelector('[data-lab]');
     if (lb) lb.addEventListener('click', () => {
       const fn = labApi();

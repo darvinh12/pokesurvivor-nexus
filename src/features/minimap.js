@@ -12,7 +12,7 @@
   const LAYERS = [
     ['terrain', 'Terreno'], ['view', 'Área visible'], ['enemies', 'Enemigos'], ['bosses', 'Jefes y legendarios'],
     ['shinies', 'Shinies'], ['golden', 'Dorados y ladrones'], ['chests', 'Cofres'], ['altars', 'Altares'],
-    ['springs', 'Charcos curativos'], ['items', 'Objetos'], ['rift', 'Grietas'], ['events', 'Eventos'], ['mates', 'Aliados'],
+    ['springs', 'Charcos curativos'], ['items', 'Objetos'], ['rift', 'Grietas'], ['events', 'Eventos'], ['mates', 'Aliados'], ['extras', 'Terrenos, objetos y portales'],
   ];
   const layer = (k) => NX.store.get('map:' + k, true) !== false;
 
@@ -294,6 +294,36 @@
           g.stroke();
         }
         dot(x, y, 4.5, down ? '#5b6b88' : m.tagColor || '#5fc8ff', '#0b1838');
+      }
+    }
+
+    // Marcadores de otros módulos (terrenos, objetos del mapa, portales):
+    // NX.mapMarkers = [{ key, list() -> [{ x, y, color, shape: 'zone'|'item'|'portal', r? }] }].
+    if (layer('extras') && Array.isArray(NX.mapMarkers)) {
+      for (const src of NX.mapMarkers) {
+        let items = [];
+        try { items = (src && src.list && src.list()) || []; } catch (_) { items = []; }
+        for (const q of items) {
+          if (!q || typeof q.x !== 'number') continue;
+          if (q.shape === 'zone') {
+            if (!inside(q.x, q.y)) continue;
+            g.save();
+            g.globalAlpha = 0.35;
+            g.beginPath();
+            g.arc(toX(q.x), toY(q.y), Math.max(3, (q.r || 80) * s), 0, Math.PI * 2);
+            g.fillStyle = q.color || '#9fe8ff';
+            g.fill();
+            g.restore();
+          } else if (q.shape === 'portal') {
+            const [x, y] = edge(q.x, q.y);
+            g.lineWidth = 2.5;
+            g.strokeStyle = q.color || '#7dff9a';
+            g.beginPath(); g.arc(x, y, 5 + Math.sin(now / 200), 0, Math.PI * 2); g.stroke();
+          } else {
+            const [x, y] = edge(q.x, q.y);
+            dot(x, y, 3.5, q.color || '#ffd23f', '#0b1838');
+          }
+        }
       }
     }
 
