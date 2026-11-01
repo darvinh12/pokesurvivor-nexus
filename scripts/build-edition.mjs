@@ -153,7 +153,7 @@ const hosts = (cfg.hosts || []).filter((h) => /^[a-z0-9.-]+$/i.test(h));
 // se reutilizan los tiers anteriores en vez de perderlos.
 let prevData = null;
 try {
-  const m = /^window\.__nexusData=(.*?);\n/s.exec(readFileSync(join(out, 'js', 'nexus-data.js'), 'utf8'));
+  const m = /^window\.__nexusData=(.*?);\r?\n/s.exec(readFileSync(join(out, 'js', 'nexus-data.js'), 'utf8'));
   if (m) prevData = JSON.parse(m[1]);
 } catch (_) { prevData = null; }
 
@@ -163,6 +163,17 @@ const SKIP = new Set(['.git', '.github', 'CNAME']);
 const KEEP = new Set(['.git', '.github']);
 if (existsSync(out)) for (const f of readdirSync(out)) if (!KEEP.has(f)) rmSync(join(out, f), { recursive: true, force: true });
 cpSync(src, out, { recursive: true, filter: (p) => !SKIP.has(relative(src, p).split(/[\\/]/)[0]) });
+// Sin conversión de saltos de línea en el repositorio de la edición: los
+// archivos se guardan tal cual (LF) en Windows y en el workflow de Linux.
+writeFileSync(join(out, '.gitattributes'), '* -text\n');
+// Saltos de línea LF en los archivos de texto: un clon en Windows trae CRLF y
+// uno en Linux (el workflow) trae LF. Sin esto, el mismo juego genera una
+// edición distinta según la máquina y el aviso de versión nueva salta sin motivo.
+for (const f of walk(out)) {
+  if (!/\.(html?|js|mjs|css|json|webmanifest|txt|xml|md|svg)$/i.test(f)) continue;
+  const s = readFileSync(f, 'utf8');
+  if (s.includes('\r\n')) writeFileSync(f, s.replace(/\r\n/g, '\n'));
+}
 
 // 1b. Archivos propios de la edición (íconos, recursos de estilo...): todo
 // edition-assets/ se copia tal cual a la raíz de la salida.
