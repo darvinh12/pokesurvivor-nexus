@@ -29,6 +29,19 @@ if (!existsSync(join(src, 'index.html')) || !existsSync(join(src, 'js', 'app.min
 const mod = join(root, 'dist', 'mod.js');
 if (!existsSync(mod)) fail('falta dist/mod.js; ejecuta antes node scripts/build.mjs');
 
+// Configuración propia (edition.config.json, fuera de git):
+//   { "hosts": ["mi-dominio.vercel.app"], "firebase": { apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId, databaseURL } }
+// Con "firebase", la edición usa ese proyecto (guardado en la nube, ranking y co-op propios)
+// y los "hosts" se agregan a la lista de dominios donde el juego activa la nube.
+// Sin "firebase", la edición queda sin conexión con guardado local.
+const cfgFile = join(root, 'edition.config.json');
+const cfg = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, 'utf8')) : {};
+const fb = cfg.firebase || null;
+if (fb) for (const k of ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId', 'databaseURL']) {
+  if (!fb[k]) fail('edition.config.json: falta firebase.' + k);
+}
+const hosts = (cfg.hosts || []).filter((h) => /^[a-z0-9.-]+$/i.test(h));
+
 // 1. Copia limpia del juego (se conserva el .git de la salida).
 const SKIP = new Set(['.git', '.github', 'CNAME']);
 if (existsSync(out)) for (const f of readdirSync(out)) if (f !== '.git') rmSync(join(out, f), { recursive: true, force: true });
@@ -49,7 +62,9 @@ const TITLE_KEEPER = `(() => {
 writeFileSync(join(out, 'js', 'nexus-data.js'), 'window.__nexusData=' + JSON.stringify(await loadData()) + ';\n' + TITLE_KEEPER + '\n');
 
 // 3. Páginas que arrancan el juego.
-const CSP = `<meta http-equiv="Content-Security-Policy" content="script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'">`;
+// Sin Firebase propio, la CSP solo deja el propio sitio. Con Firebase propio se
+// conserva la CSP original del juego, que ya permite los dominios de Firebase.
+const CSP = fb ? null : `<meta http-equiv="Content-Security-Policy" content="script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'">`;
 const BADGE = '<div id="nx-edition" style="position:fixed;right:8px;bottom:6px;z-index:9;pointer-events:none;font:11px system-ui,sans-serif;' +
   'color:#fff;opacity:.55;text-shadow:0 1px 2px #000">Nexus Edition · edición no oficial basada en PokéSurvivor de JPTER78</div>';
 let pages = 0;
@@ -59,8 +74,8 @@ for (const file of walk(out).filter((f) => f.endsWith('.html'))) {
   const m = app.exec(s);
   if (!m) continue;
   const base = m[1], bust = '?v=' + version;
-  s = s.replace(/<meta http-equiv="Content-Security-Policy" content="[^"]*">/, CSP)
-    .replace(m[0], `<script src="${base}js/nexus-data.js${bust}"></script><script src="${base}js/nexus.js${bust}"></script>\n${m[0]}`)
+  if (CSP) s = s.replace(/<meta http-equiv="Content-Security-Policy" content="[^"]*">/, CSP);
+  s = s.replace(m[0], `<script src="${base}js/nexus-data.js${bust}"></script><script src="${base}js/nexus.js${bust}"></script>\n${m[0]}`)
     .replace(/<title>([^<]*)<\/title>/, (_, t) => `<title>${t.split(/ [–-] /)[0]} · Nexus Edition</title>`)
     .replace(/<head>/i, '<head>\n<meta name="robots" content="noindex">')
     .replace(/<\/body>/i, BADGE + '</body>');
@@ -74,7 +89,21 @@ const appFile = join(out, 'js', 'app.min.js');
 const app = readFileSync(appFile, 'utf8');
 const boot = /_0x[0-9a-f]+\['Hz'\]\['boot'\]\(\),/;
 if (!boot.test(app)) console.warn('[edition] no se encontró el arranque del detector; revisa si el juego lo cambió');
-writeFileSync(appFile, app.replace(boot, ''));
+let appOut = app.replace(boot, '');
+
+// 4b. Firebase propio y dominios donde el juego activa la nube.
+if (fb) {
+  const q = (v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+  const conf = /'apiKey':'[^']*','authDomain':'[^']*','projectId':'[^']*','storageBucket':'[^']*','messagingSenderId':[^,]+,'appId':'[^']*','databaseURL':'[^']*'/;
+  if (!conf.test(appOut)) fail('no se encontró la configuración de Firebase del juego; el juego cambió su estructura');
+  appOut = appOut.replace(conf, `'apiKey':${q(fb.apiKey)},'authDomain':${q(fb.authDomain)},'projectId':${q(fb.projectId)},'storageBucket':${q(fb.storageBucket)},'messagingSenderId':${q(fb.messagingSenderId)},'appId':${q(fb.appId)},'databaseURL':${q(fb.databaseURL)}`);
+}
+if (hosts.length) {
+  const list = /\['pokesurvivor\.com','www\.pokesurvivor\.com',[^\]]*\]/;
+  if (!list.test(appOut)) console.warn('[edition] no se encontró la lista de dominios oficiales; la nube puede no activarse en ' + hosts.join(', '));
+  appOut = appOut.replace(list, (m) => m.slice(0, -1) + hosts.map((h) => `,'${h}'`).join('') + ']');
+}
+writeFileSync(appFile, appOut);
 
 // 5. Avisos.
 const upstream = gitHead(src);
@@ -88,7 +117,7 @@ El juego original es obra de JPTER78 y se distribuye bajo PolyForm Noncommercial
 
 Nexus (js/nexus.js) es MIT: https://github.com/darvinh12/pokesurvivor-nexus. Los tiers de js/nexus-data.js vienen de SurvivorTiers (https://survivortiers.pages.dev/), de @fildotai.
 
-Cambios respecto al original: se agregan js/nexus.js y js/nexus-data.js, las páginas del juego los cargan, la edición funciona sin el Firebase del autor (guardado local, sin ranking ni co-op en línea), se omite el detector de extensiones y se ajustan título, aviso e indexación.
+Cambios respecto al original: se agregan js/nexus.js y js/nexus-data.js, las páginas del juego los cargan, la edición no usa el Firebase del autor (${fb ? 'usa un proyecto de Firebase propio' : 'guardado local, sin ranking ni co-op en línea'}), se omite el detector de extensiones y se ajustan título, aviso e indexación.
 
 Generada desde ${upstream} con Nexus v${version}.
 `);
