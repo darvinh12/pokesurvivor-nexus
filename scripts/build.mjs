@@ -2,7 +2,7 @@
 // extension/mod.bundled.js.
 //   node scripts/build.mjs                 build con la versión actual
 //   node scripts/build.mjs --release 0.2.0 fija una versión nueva para publicar
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -11,21 +11,10 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const at = (...p) => join(root, ...p);
 
-// El orden importa: el núcleo primero, los módulos después.
-const FILES = [
-  'core/store.js',
-  'core/util.js',
-  'core/hook.js',
-  'core/features.js',
-  'core/keys.js',
-  'core/hud.js',
-  'core/settings.js',
-  'features/sharpness.js',
-  'features/fov.js',
-  'features/minimap.js',
-  'features/shortcuts.js',
-  'features/combat.js',
-];
+// El núcleo va primero y en este orden. Los módulos de src/features se
+// incluyen todos, en orden alfabético, porque no dependen entre sí.
+const CORE = ['store', 'util', 'hook', 'features', 'keys', 'hud', 'settings'].map((f) => `core/${f}.js`);
+const FILES = [...CORE, ...readdirSync(at('src', 'features')).filter((f) => f.endsWith('.js')).sort().map((f) => `features/${f}`)];
 
 const verFile = at('dist', 'version.json');
 const prev = existsSync(verFile) ? JSON.parse(readFileSync(verFile, 'utf8')).version : '0.0.0';
@@ -41,6 +30,9 @@ const code = `/*! PokeSurvivor Nexus v${version} */
 (() => {
 'use strict';
 if (window.__nexus) return;
+// El sitio público bloquea las extensiones a propósito. Nexus solo corre en el
+// laboratorio local, así que aquí se queda inactivo.
+if (location.hostname === 'pokesurvivor.com' || location.hostname.endsWith('.pokesurvivor.com')) { console.info('[nexus] inactivo en el sitio público; usa el laboratorio local'); return; }
 const NX = { version: '${version}' };
 window.__nexus = {
   version: '${version}',

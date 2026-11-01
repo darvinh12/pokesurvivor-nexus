@@ -2,9 +2,9 @@ const $ = (id) => document.getElementById(id);
 
 function show(s) {
   $('warn').classList.toggle('hidden', !!s.userScripts);
-  $('ver').textContent = (s.running && s.running.version) || '—';
-  $('src').textContent = (s.running && s.running.source) || '—';
-  $('latest').textContent = s.latest || '—';
+  $('ver').textContent = (s.running && s.running.version) || 'sin datos';
+  $('src').textContent = (s.running && s.running.source) || 'sin datos';
+  $('latest').textContent = s.latest || 'sin datos';
   $('checked').textContent = s.checkedAt ? new Date(s.checkedAt).toLocaleString() : 'nunca';
   $('error').textContent = s.lastError ? 'Último error: ' + s.lastError : '';
   $('error').classList.toggle('hidden', !s.lastError);

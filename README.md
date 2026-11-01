@@ -1,58 +1,80 @@
 # PokeSurvivor Nexus
 
-Extensión de Chrome que agrega mejoras gráficas y de calidad de vida a [PokéSurvivor](https://pokesurvivor.com) sin tocar las reglas del juego. Es un proyecto de fans, gratuito y sin relación con el autor del juego.
+Laboratorio de mejoras gráficas y de calidad de vida para [PokéSurvivor](https://pokesurvivor.com). Sirve para probar cada idea sobre el código real del juego y proponérsela a su autor, JPTER78, para que la incorpore si le parece útil. Es un proyecto de fans, gratuito y sin relación oficial con el juego.
 
-## Qué trae la versión 0.1
+El sitio público bloquea las extensiones a propósito, y Nexus respeta esa decisión. Por eso Nexus corre solo sobre una copia local del juego, que se sirve sin conexión a Firebase. Las pruebas no llegan a las cuentas, al ranking ni al servidor del autor. En pokesurvivor.com el mod se queda inactivo.
 
-| Módulo | Qué hace | Atajo |
+## Cómo probarlo
+
+1. Clona este repositorio y, dentro de él, el juego:
+   ```bash
+   git clone --depth 1 https://github.com/JPTER78/pokesurvivor.git _ref/game
+   node scripts/lab-server.mjs
+   ```
+2. En Chrome abre `chrome://extensions`, activa el "Modo de desarrollador", pulsa "Cargar descomprimida" y elige la carpeta `extension`.
+3. En "Detalles" de PokeSurvivor Nexus activa **Permitir scripts de usuario**. Sin ese interruptor el mod funciona igual, pero sin actualizarse solo y sin los datos de SurvivorTiers.
+4. Abre `http://localhost:8080` y entra como invitado.
+
+El servidor del laboratorio sirve los archivos del juego con dos cambios hechos en memoria. La política de seguridad de la página solo deja cargar scripts y conexiones del propio equipo, así que el juego corre con guardado local. Además se omite el arranque del detector de extensiones, que en una copia sin conexión no protege nada. Los archivos del juego no se modifican.
+
+## Qué trae
+
+Los ajustes se abren con **Alt + N** o con el botón "Nexus" del menú principal. El panel tiene pestañas y un buscador. Cada módulo se puede apagar por separado, y si una actualización del juego rompe alguno, la red de seguridad lo desactiva sin afectar a los demás.
+
+| Pestaña | Módulo | Atajo |
 |---|---|---|
-| Campo de visión | Aleja la cámara de 1.0x a 1.7x para ver más mapa | Alt + / Alt − / Alt 0 |
-| Minimapa | Mapa flotante con terreno, enemigos, jefes, shinies, cofres, altares, objetos, grietas y aliados. Se arrastra, se redimensiona y cada capa se puede apagar | Alt + M |
-| Nitidez y rendimiento | Modo rendimiento a 1x, escalado nítido del pixel art y límite de 30 o 60 FPS | |
-| Atajos extra | Números del 1 al 9 en la pantalla de vínculo, Retroceso para volver y Enter en el fin de partida | |
-| Indicadores de combate | Radio del imán de experiencia, viñeta roja con vida baja y cuenta regresiva al próximo jefe o al Juicio | |
-
-Los ajustes se abren con **Alt + N** dentro del juego o con el botón "Nexus" del menú principal.
-
-## Instalación
-
-1. Descarga el repositorio con "Code > Download ZIP" y descomprímelo, o clónalo con git.
-2. Abre `chrome://extensions` y activa el "Modo de desarrollador".
-3. Pulsa "Cargar descomprimida" y elige la carpeta `extension`.
-4. Entra en "Detalles" de PokeSurvivor Nexus y activa **Permitir scripts de usuario**. Sin ese interruptor la extensión funciona igual, pero no se actualiza sola.
-5. Recarga pokesurvivor.com.
-
-Funciona en Chrome, Edge, Brave y Opera de escritorio a partir de la versión 120. No conviene tenerla activa junto con PokeSurvivor Plus, porque las dos dibujan su propio minimapa y cambian la cámara.
+| Cámara y mapa | Campo de visión de 1.0x a 1.7x | Alt + / Alt − / Alt 0 |
+| Cámara y mapa | Minimapa arrastrable con 13 capas | Alt + M |
+| HUD | Escala del HUD de 1x a 2x | |
+| HUD | Placa de vida del jefe, panel de reloj y colores de las barras | |
+| HUD | Flechas en el borde hacia jefes, shinies, dorados, cofres grandes y grietas | |
+| HUD | Modo daltónico (protanopia, deuteranopia, tritanopia) | |
+| HUD | Hitboxes | Alt + B |
+| HUD | Contador de FPS | Alt + F |
+| HUD | Captura limpia sin HUD | Alt + S |
+| HUD | Medidor de daño y DPS por movimiento | mantener Tab |
+| Partida | Atajos en la pantalla de vínculo y en el fin de partida | 1 a 9, Retroceso, Enter |
+| Partida | Radio del imán, alerta de vida baja y cuenta regresiva al jefe | |
+| Partida | Alertas de shiny, legendario, jefe, dorado y grieta | |
+| Datos | Historial de partidas, ranking personal y autopsia de la última muerte | Alt + R |
+| Datos | Tooltips de movimientos, objetos y clima | |
+| Datos | Tier y build de SurvivorTiers en las pantallas de Pokémon | |
+| Datos | Build recomendada y asistente de evoluciones en las cartas de nivel | |
+| Datos | Enciclopedia de movimientos, objetos, Pokémon y tipos | F1 o Alt + I |
+| Menús | Gacha rápido y faltantes por región | |
+| Menús | Pokédex con orden, filtros, favoritos, comparador y notas | |
+| Menús | Maximizar mejoras de un Pokémon con confirmación del costo | |
+| Menús | Checklist de Pokémon, shinies y logros que faltan | |
+| General | Respaldo de ajustes y datos de Nexus | |
+| Rendimiento | Resolución, pixel art nítido, límite de FPS y efectos reducidos | |
 
 ## Cómo se actualiza
 
-La extensión es un cascarón pequeño que se instala una sola vez. Al abrir Chrome y cada 30 minutos revisa `dist/version.json` en este repositorio. Si hay una versión nueva, descarga `dist/mod.js`, comprueba su hash SHA-256 y su tamaño, y la deja lista para la próxima vez que se cargue el juego. Si la descarga falla, sigue usando la última versión buena. El ícono de la extensión muestra la versión activa y permite buscar una actualización a mano.
+La extensión es un cascarón que se instala una sola vez. Al abrir Chrome y cada 30 minutos revisa `dist/version.json` en este repositorio. Si hay una versión nueva, descarga `dist/mod.js`, comprueba su hash SHA-256 y su tamaño, y la usa la próxima vez que se cargue el laboratorio. Cada seis horas descarga también el ranking de SurvivorTiers.
 
-Si una actualización del juego rompe un módulo, la red de seguridad lo apaga solo y el resto sigue funcionando. El estado de cada módulo aparece en el panel de ajustes.
-
-## Publicar una versión
+Para publicar una versión:
 
 ```bash
-node scripts/build.mjs --release 0.2.0
-git add -A && git commit -m "Versión 0.2.0" && git push
+node scripts/build.mjs --release 0.3.0
+git add -A && git commit -m "Versión 0.3.0" && git push
 ```
 
-El build une `src/` en `dist/mod.js`, calcula el hash para `dist/version.json` y copia el resultado a `extension/mod.bundled.js`. Mientras no se ejecute con `--release`, lo que se suba a `main` no les llega a los jugadores, porque la extensión solo descarga cuando sube el número de versión.
+Lo que se suba sin `--release` no les llega a quienes tengan la extensión instalada.
 
 ## Estructura
 
 ```
-extension/   cascarón: manifiesto, actualizador, popup y copia empaquetada del mod
-src/core/    enganche al juego, red de seguridad, ajustes, atajos y capa de dibujo
-src/features/ un archivo por módulo
-scripts/     build
-dist/        versión publicada (mod.js y version.json)
-docs/        diseño y planes por fase
+extension/      cascarón: manifiesto, actualizador, popup y copia empaquetada del mod
+src/core/       enganche al juego, red de seguridad, ajustes, atajos y capa de dibujo
+src/features/   un archivo por módulo
+scripts/        build, bundle de desarrollo y servidor del laboratorio
+dist/           versión publicada (mod.js y version.json)
+docs/           diseño y planes por fase
 ```
 
 ## Créditos
 
-La técnica para engancharse a los módulos internos del juego y el enfoque del minimapa vienen de [PokeSurvivor Plus](https://github.com/PokeSurvivorPlus/PokeSurvivorPlus) (MIT). PokéSurvivor es obra de JPTER78 y su código se publica bajo PolyForm Noncommercial 1.0.0. Pokémon y sus nombres pertenecen a sus dueños.
+La técnica para engancharse a los módulos internos del juego y varias piezas de HUD, telemetría y menús se adaptaron de [PokeSurvivor Plus](https://github.com/PokeSurvivorPlus/PokeSurvivorPlus) (MIT). Los tiers y builds recomendadas vienen de [SurvivorTiers](https://survivortiers.pages.dev/), de @fildotai. PokéSurvivor es obra de JPTER78 y su código se publica bajo PolyForm Noncommercial 1.0.0. Pokémon y sus nombres pertenecen a sus dueños.
 
 ## Licencia
 

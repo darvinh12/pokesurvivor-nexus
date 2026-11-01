@@ -37,6 +37,14 @@ NX.ui = {
     sel.addEventListener('change', () => { NX.store.set(key, sel.value); if (onChange) onChange(sel.value); });
     return row;
   },
+  button(label, onClick) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'nx-btn';
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    return b;
+  },
   note(text) {
     const p = document.createElement('p');
     p.className = 'nx-note';
@@ -61,19 +69,50 @@ NX.css(`#nexus-panel{position:fixed;inset:0;z-index:100000;display:flex;align-it
 #nexus-panel .nx-st{font-size:12px;padding:1px 7px;border-radius:9px;background:#2fbf6a}
 #nexus-panel .nx-st.pending{background:#5b6b88}#nexus-panel .nx-st.missing{background:#d98a1f}#nexus-panel .nx-st.broken{background:#d8344a}
 #nexus-panel .nx-status{margin-top:14px;font-size:12px;opacity:.85}
+#nexus-panel .nx-search{width:100%;box-sizing:border-box;margin:6px 0;font:inherit;background:#0b1838;color:#fff;border:1px solid #5b83d6;border-radius:6px;padding:5px 8px}
+#nexus-panel .nx-tabs{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 2px}
+#nexus-panel .nx-tabs button{font:inherit;font-size:12px;background:#0b1838;color:#cfe0ff;border:1px solid #5b83d6;border-radius:12px;padding:2px 10px;cursor:pointer}
+#nexus-panel .nx-tabs button.on{background:#ffd23f;color:#0b1838;border-color:#ffd23f}
+#nexus-panel .nx-btn{font:inherit;font-size:13px;background:#0b1838;color:#fff;border:2px solid #f4f8ff;border-radius:6px;cursor:pointer;padding:3px 10px;margin:4px 6px 4px 0}
 #nexus-fab{position:fixed;left:12px;bottom:12px;z-index:9999;padding:6px 12px;border-radius:8px;cursor:pointer;
   background:#152a5c;color:#ffd23f;border:2px solid #f4f8ff;outline:2px solid #0b1838;font:13px var(--font,'Pixelify',system-ui,sans-serif)}`);
 
 let panel = null, fab = null;
 const STATUS_TXT = { ok: 'activo', pending: 'esperando', missing: 'falta', broken: 'roto' };
 
+// Pestañas del panel, en orden. Una sección sin tab cae en "General".
+const TABS = ['Cámara y mapa', 'HUD', 'Partida', 'Datos', 'Menús', 'Rendimiento', 'General'];
+const TAB_OF = { fov: 'Cámara y mapa', minimap: 'Cámara y mapa', sharp: 'Rendimiento', shortcuts: 'Partida', combat: 'Partida' };
+const tabOf = (s) => s.tab || TAB_OF[s.key] || 'General';
+let curTab = NX.store.get('panelTab', TABS[0]), query = '';
+
 function renderPanel() {
   const box = panel.querySelector('.nx-box');
+  const used = TABS.filter((t) => sections.some((s) => tabOf(s) === t));
+  if (!used.includes(curTab)) curTab = used[0];
   box.innerHTML = `<h2>PokeSurvivor Nexus <button class="nx-close" type="button">Cerrar</button></h2>
-    <p class="nx-note">v${NX.esc(NX.version)} · Alt+N abre y cierra este panel</p>`;
+    <p class="nx-note">v${NX.esc(NX.version)} · Alt+N abre y cierra este panel</p>
+    <input class="nx-search" type="search" placeholder="Buscar ajuste…" value="${NX.esc(query)}">
+    <div class="nx-tabs">${used.map((t) => `<button type="button" class="${t === curTab && !query ? 'on' : ''}">${NX.esc(t)}</button>`).join('')}</div>`;
   box.querySelector('.nx-close').addEventListener('click', togglePanel);
+  box.querySelectorAll('.nx-tabs button').forEach((b) => b.addEventListener('click', () => {
+    curTab = b.textContent; query = '';
+    NX.store.set('panelTab', curTab);
+    renderPanel();
+  }));
+  const search = box.querySelector('.nx-search');
+  search.addEventListener('input', () => {
+    query = search.value;
+    renderPanel();
+    const s2 = panel.querySelector('.nx-search');
+    s2.focus();
+    s2.setSelectionRange(s2.value.length, s2.value.length);
+  });
+  const q = query.trim().toLowerCase();
   const feats = new Map(NX.featureList().map((f) => [f.key, f]));
-  for (const s of sections) {
+  const visible = sections.filter((s) => (q ? (s.title + ' ' + (s.keywords || '')).toLowerCase().includes(q) : tabOf(s) === curTab));
+  if (!visible.length) box.appendChild(NX.ui.note('Ningún ajuste coincide con la búsqueda.'));
+  for (const s of visible) {
     const f = feats.get(s.key);
     const h = document.createElement('h3');
     h.innerHTML = `<span>${NX.esc(s.title)}</span>`;

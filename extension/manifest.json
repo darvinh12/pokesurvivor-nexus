@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "PokeSurvivor Nexus",
-  "version": "1.0.0",
-  "description": "Mejoras gráficas y de calidad de vida para PokéSurvivor: campo de visión, minimapa, indicadores y más.",
+  "version": "1.2.0",
+  "description": "Laboratorio de mejoras para PokéSurvivor: prueba sobre una copia local del juego las propuestas de HUD, datos y menús.",
   "minimum_chrome_version": "120",
   "permissions": ["userScripts", "scripting", "storage", "alarms"],
   "host_permissions": [
-    "https://pokesurvivor.com/*",
-    "https://www.pokesurvivor.com/*",
-    "https://raw.githubusercontent.com/*"
+    "http://localhost:8080/*",
+    "http://127.0.0.1:8080/*",
+    "https://raw.githubusercontent.com/*",
+    "https://survivortiers.pages.dev/*"
   ],
   "background": { "service_worker": "background.js" },
   "action": { "default_title": "PokeSurvivor Nexus", "default_popup": "popup.html" }

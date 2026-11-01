@@ -4,10 +4,15 @@
 // usuario están apagados, registra la copia empaquetada como content script:
 // funciona igual, pero sin actualizarse solo.
 const CHANNEL = 'https://raw.githubusercontent.com/darvinh12/pokesurvivor-nexus/main/dist/';
-const MATCHES = ['https://pokesurvivor.com/*', 'https://www.pokesurvivor.com/*'];
+// Solo la copia local del laboratorio (scripts/lab-server.mjs). El sitio
+// público bloquea las extensiones y Nexus respeta esa decisión.
+const MATCHES = ['http://localhost:8080/*', 'http://127.0.0.1:8080/*'];
 const SCRIPT_ID = 'nexus';
 const HEADER = '/*! PokeSurvivor Nexus v';
 const CHECK_MINUTES = 30;
+const TIERS_SITE = 'https://survivortiers.pages.dev/';
+const TIERS_CSV = TIERS_SITE + 'data/ranking.csv';
+const TIERS_EVERY_MS = 6 * 3600 * 1000;
 
 const verOf = (code) => {
   const m = typeof code === 'string' && code.startsWith(HEADER) && /^\/\*! PokeSurvivor Nexus v(\d+\.\d+\.\d+) \*\//.exec(code);
@@ -22,6 +27,44 @@ const sha256 = async (text) => {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 };
+
+// ---- SurvivorTiers (por @fildotai). La página del juego no puede pedirlo
+// por CORS, así que se descarga aquí y se inyecta como window.__nexusData.
+function parseCsvLine(line) {
+  const out = [];
+  let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { out.push(cur); cur = ''; } else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+async function refreshTiers(force) {
+  const { tiers } = await chrome.storage.local.get('tiers');
+  if (!force && tiers && Date.now() - tiers.fetchedAt < TIERS_EVERY_MS) return false;
+  const text = await (await fetch(TIERS_CSV, { cache: 'no-store' })).text();
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() && !l.startsWith('#'));
+  const head = parseCsvLine(lines.shift());
+  const col = (n) => head.indexOf(n);
+  const rows = lines.map(parseCsvLine).map((r) => ({
+    dex: +r[col('dex')], rank: +r[col('rank')], name: r[col('name')], tier: r[col('tier')],
+    style: r[col('build')], moves: (r[col('group')] || '').split('+').filter(Boolean),
+    score: +r[col('median_score')], otherStyle: r[col('other_build')], otherScore: +r[col('other_score')],
+  })).filter((r) => r.dex > 0 && r.tier);
+  if (rows.length < 100) throw new Error('ranking.csv incompleto');
+  let patch = '';
+  try {
+    const html = await (await fetch(TIERS_SITE, { cache: 'no-store' })).text();
+    const m = /parche del ([^<"]{3,40})/i.exec(html);
+    if (m) patch = m[1].trim();
+  } catch (_) { /* la fecha es opcional */ }
+  await chrome.storage.local.set({ tiers: { fetchedAt: Date.now(), patch, rows } });
+  return true;
+}
 
 async function userScriptsOn() {
   try { await chrome.userScripts.getScripts(); return true; } catch (_) { return false; }
@@ -48,7 +91,10 @@ async function install() {
   const fallback = await chrome.scripting.getRegisteredContentScripts({ ids: [SCRIPT_ID] });
   if (us) {
     if (fallback.length) await chrome.scripting.unregisterContentScripts({ ids: [SCRIPT_ID] });
-    const def = { id: SCRIPT_ID, matches: MATCHES, js: [{ code: a.code }], runAt: 'document_start', world: 'MAIN' };
+    const { tiers } = await chrome.storage.local.get('tiers');
+    const data = { tiers: tiers || null, shell: chrome.runtime.getManifest().version };
+    const js = [{ code: 'window.__nexusData=' + JSON.stringify(data) + ';' }, { code: a.code }];
+    const def = { id: SCRIPT_ID, matches: MATCHES, js, runAt: 'document_start', world: 'MAIN' };
     const have = await chrome.userScripts.getScripts({ ids: [SCRIPT_ID] });
     if (have.length) await chrome.userScripts.update([def]);
     else await chrome.userScripts.register([def]);
@@ -83,7 +129,14 @@ async function check() {
   } catch (err) {
     await chrome.storage.local.set({ checkedAt: now, lastError: String((err && err.message) || err) });
   }
-  await install();
+  try { await refreshTiers(false); } catch (err) {
+    console.warn('[nexus] tiers', err);
+  }
+  try {
+    await install();
+  } catch (err) {
+    await chrome.storage.local.set({ lastError: 'install: ' + String((err && err.message) || err) });
+  }
 }
 
 async function boot() {
