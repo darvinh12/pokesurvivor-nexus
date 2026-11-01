@@ -1,7 +1,8 @@
 // Laboratorio: sirve una copia local de PokéSurvivor para probar Nexus sin
 // tocar el sitio público, su ranking ni su servidor.
 //   git clone --depth 1 https://github.com/JPTER78/pokesurvivor.git _ref/game
-//   node scripts/lab-server.mjs [carpeta del juego] [--port 8080]
+//   node scripts/lab-server.mjs [carpeta del juego] [--port 8080] [--plain]
+// Con --plain sirve la carpeta tal cual (por ejemplo, la edición ya generada).
 //
 // La copia se sirve con dos cambios en memoria (los archivos no se tocan):
 //  - La CSP de la página deja solo 'self' para scripts y conexiones, así que el
@@ -18,6 +19,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const pi = args.indexOf('--port');
 const port = pi >= 0 ? +args[pi + 1] : 8080;
+const plain = args.includes('--plain');
 const dirArg = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--port');
 const gameDir = resolve(dirArg || join(root, '_ref', 'game'));
 
@@ -54,7 +56,7 @@ createServer(async (req, res) => {
     if (!st || !st.isFile()) { res.writeHead(404, { 'content-type': 'text/plain' }).end('404'); return; }
     const ext = extname(file).toLowerCase();
     let body = await readFile(file);
-    if (ext === '.html') body = Buffer.from(patchHtml(body.toString('utf8')));
+    if (plain) { /* sin cambios */ } else if (ext === '.html') body = Buffer.from(patchHtml(body.toString('utf8')));
     else if (/[\\/]js[\\/]app\.min\.js$/.test(file)) body = Buffer.from(patchApp(body.toString('utf8')));
     res.writeHead(200, { 'content-type': TYPES[ext] || 'application/octet-stream', 'cache-control': 'no-store' });
     res.end(body);

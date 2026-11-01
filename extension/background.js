@@ -59,7 +59,7 @@ async function refreshTiers(force) {
   let patch = '';
   try {
     const html = await (await fetch(TIERS_SITE, { cache: 'no-store' })).text();
-    const m = /parche del ([^<"]{3,40})/i.exec(html);
+    const m = /parche del (\d{1,2} [a-záéíóú]{3,10}\.? \d{4})/i.exec(html);
     if (m) patch = m[1].trim();
   } catch (_) { /* la fecha es opcional */ }
   await chrome.storage.local.set({ tiers: { fetchedAt: Date.now(), patch, rows } });
