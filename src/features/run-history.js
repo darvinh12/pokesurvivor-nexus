@@ -167,7 +167,7 @@
     const det = cols.querySelector('.nx-det');
     const cause = r.outcome === 'death' && r.killer ? ` · ${NX.esc(r.killer)}${r.killerHow ? ' (' + NX.esc(r.killerHow) + ')' : ''}` : '';
     det.innerHTML = `<h4 style="margin-top:0">${NX.esc(r.mon)}${r.shiny ? ' ★' : ''} · ${fmtDate(r.at)}</h4>
-      <p class="nx-note">${OUTCOME[r.outcome] || 'Partida'}${cause}</p>${tiles(r)}
+      <p class="nx-note">${r.interrupted ? 'Interrumpida (se cerró la pestaña)' : OUTCOME[r.outcome] || 'Partida'}${cause}</p>${tiles(r)}
       <h4>Daño en el tiempo</h4><div class="nx-chart"></div>
       <div class="nx-leg"><i style="background:#ffd23f"></i>daño acumulado<i style="background:#5be08a"></i>vida</div>
       <h4>Movimientos con más daño</h4>

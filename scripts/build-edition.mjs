@@ -18,6 +18,107 @@
 import { cpSync, existsSync, readFileSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+
+// Service worker de la edición (ver buildOffline). __V__ y __PRE__ se
+// reemplazan al generar.
+const SW_SOURCE = `// Service worker de PokeSurvivor Nexus Edition, generado por scripts/build-edition.mjs.
+// Código e interfaz: red primero y copia en caché (precacheada al instalar).
+// Sprites: caché primero, se guardan al usarlos. Sin red se sirve la caché.
+const V = '__V__';
+const CODE = 'nx-code-' + V, ART = 'ps-art-v1', EXT = 'nx-ext-v1';
+const PRE = __PRE__;
+const abs = (p) => new URL(p, self.registration.scope).href;
+const keyOf = (url) => { const u = new URL(url); u.search = ''; u.hash = ''; return u.href; };
+
+self.addEventListener('install', (e) => {
+  e.waitUntil((async () => {
+    const c = await caches.open(CODE);
+    await Promise.all(PRE.map(async (p) => {
+      const key = keyOf(abs(p));
+      try {
+        const r = await fetch(new Request(abs(p), { cache: 'reload' }));
+        if (r.ok) { await c.put(key, r); return; }
+      } catch (_) { /* sin red: se intenta con la versión anterior */ }
+      const old = await caches.match(key, { ignoreSearch: true });
+      if (old) await c.put(key, old);
+    }));
+  })());
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys()
+    .then((ks) => Promise.all(ks.filter((k) => k !== CODE && k !== ART && k !== EXT).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
+
+const fromCache = async (key, nav) => (await caches.match(key, { ignoreSearch: true })) ||
+  (nav ? (await caches.match(abs('./'))) || (await caches.match(abs('index.html'))) : null) || null;
+
+async function netFirst(req, nav) {
+  const key = keyOf(req.url);
+  if (self.navigator && self.navigator.onLine === false) { const h = await fromCache(key, nav); if (h) return h; }
+  const net = fetch(req).then((res) => {
+    if (res && res.ok && res.type === 'basic') { const copy = res.clone(); caches.open(CODE).then((c) => c.put(key, copy)).catch(() => {}); }
+    return res;
+  });
+  try {
+    if (!nav) return await net;
+    // Red muy lenta al abrir la app: tras 7 s, la copia guardada.
+    return await new Promise((resolve, reject) => {
+      let done = false;
+      const t = setTimeout(async () => { const h = await fromCache(key, true); if (h && !done) { done = true; resolve(h); } }, 7000);
+      net.then((r) => { clearTimeout(t); if (!done) { done = true; resolve(r); } }, (err) => { clearTimeout(t); if (!done) { done = true; reject(err); } });
+    });
+  } catch (_) {
+    return (await fromCache(key, nav)) || Response.error();
+  }
+}
+
+async function cacheFirst(req, name, cors) {
+  const c = await caches.open(name);
+  const key = cors ? req.url : keyOf(req.url);
+  const hit = await c.match(key);
+  if (hit) return hit;
+  const res = await fetch(cors ? new Request(req.url, { mode: 'cors', credentials: 'omit' }) : req).catch(() => (cors ? fetch(req) : Promise.reject(new Error('sin red'))));
+  if (res.ok && res.type !== 'opaque') c.put(key, res.clone()).catch(() => {});
+  return res;
+}
+
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== location.origin) {
+    // El SDK de Firebase (URLs con versión, no cambian): disponible sin red.
+    if (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/')) e.respondWith(cacheFirst(req, EXT, true));
+    return;
+  }
+  if (url.pathname.endsWith('/sw.js') || url.pathname.startsWith('/__/') || req.headers.has('range')) return;
+  if (url.pathname.includes('/assets/pokemon/')) {
+    // Los disfraces (k-*) pueden cambiar: red primero, como hacía el juego.
+    e.respondWith(/\\/k-[a-z0-9-]+\\//.test(url.pathname) ? netFirst(req, false) : cacheFirst(req, ART, false));
+    return;
+  }
+  e.respondWith(netFirst(req, req.mode === 'navigate'));
+});
+
+self.addEventListener('message', (e) => {
+  const d = e.data || {}, port = e.ports && e.ports[0];
+  if (!port) return;
+  if (d.type === 'nx-status') {
+    e.waitUntil((async () => {
+      const code = await caches.open(CODE), art = await caches.open(ART);
+      let have = 0;
+      for (const p of PRE) if (await code.match(keyOf(abs(p)))) have++;
+      port.postMessage({ v: V, pre: PRE.length, have, art: (await art.keys()).length });
+    })());
+  } else if (d.type === 'nx-clear-art') {
+    e.waitUntil(caches.delete(ART).then(() => port.postMessage({ ok: true })));
+  }
+});
+`;
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const [srcArg, outArg] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
@@ -159,6 +260,15 @@ if (hosts.length) {
 }
 writeFileSync(appFile, appOut);
 
+// 4c. Modo sin conexión: service worker propio en lugar del sw.js del juego
+// (que solo guardaba la portada y la hoja de estilos). Precachea el código y
+// la interfaz, guarda cada sprite al usarlo (y los que el panel descargue por
+// adelantado) y sirve todo desde la caché sin red. El nombre de la caché de
+// código lleva un hash del contenido, así que una regeneración sin cambios
+// produce el mismo sw.js. nexus-offline.json lista los tamaños para el panel.
+const offline = buildOffline(out);
+console.log(`[edition] sin conexión: ${offline.files} archivos de código (${(offline.bytes / 1048576).toFixed(1)} MB), sprites ${(offline.art / 1048576).toFixed(0)} MB`);
+
 // 5. Avisos.
 const upstream = gitHead(src);
 writeFileSync(join(out, 'NOTICE.md'), `# PokeSurvivor Nexus Edition
@@ -171,7 +281,7 @@ El juego original es obra de JPTER78 y se distribuye bajo PolyForm Noncommercial
 
 Nexus (js/nexus.js) es MIT: https://github.com/darvinh12/pokesurvivor-nexus. Los tiers de js/nexus-data.js vienen de SurvivorTiers (https://survivortiers.pages.dev/), de @fildotai.
 
-Cambios respecto al original: se agregan js/nexus.js y js/nexus-data.js, las páginas del juego los cargan, la edición no usa el Firebase del autor (${fb ? 'usa un proyecto de Firebase propio' : 'guardado local, sin ranking ni co-op en línea'}), se omite el detector de extensiones, se ajustan título, aviso e indexación, y la app instalable tiene nombre e íconos propios.
+Cambios respecto al original: se agregan js/nexus.js y js/nexus-data.js, las páginas del juego los cargan, la edición no usa el Firebase del autor (${fb ? 'usa un proyecto de Firebase propio' : 'guardado local, sin ranking ni co-op en línea'}), se omite el detector de extensiones, se ajustan título, aviso e indexación, la app instalable tiene nombre e íconos propios y un service worker propio (sw.js) permite jugar sin conexión.
 
 Generada desde ${upstream} con Nexus v${version}.
 `);
@@ -195,6 +305,57 @@ Esta carpeta se genera con node scripts/build-edition.mjs desde https://github.c
 `);
 console.log(`Edición lista en ${out} · Nexus v${version} · ${pages} páginas · juego ${upstream}`);
 
+function buildOffline(dir) {
+  const rel = (p) => relative(dir, p).split(/[\\/]/).join('/');
+  const all = (sub) => (existsSync(join(dir, sub)) ? walkAll(join(dir, sub)) : []);
+  const pre = ['index.html', 'manifest.webmanifest', 'favicon.ico', 'version.json']
+    .filter((f) => existsSync(join(dir, f)))
+    .concat(...['css', 'js', 'icons', 'nexus', 'assets/icons', 'assets/fonts', 'assets/banner'].map((s) => all(s).map(rel)))
+    .filter((f) => !/\.(md|txt|map)$/i.test(f));
+  const hash = createHash('sha256');
+  let bytes = 0;
+  for (const f of pre.sort()) {
+    const buf = readFileSync(join(dir, f));
+    bytes += buf.length;
+    hash.update(f + '\0').update(buf);
+  }
+  // Sprites: por carpeta, bytes normales y shiny, y la lista de animaciones
+  // solo si difiere de la habitual. Las variantes k-* (disfraces) no cuentan.
+  const ANIMS = ['Attack', 'Charge', 'Faint', 'Hurt', 'Idle', 'Shoot', 'Walk'];
+  const art = { bytes: 0, anims: ANIMS, dex: {} };
+  const pk = join(dir, 'assets', 'pokemon');
+  if (existsSync(pk)) {
+    for (const k of readdirSync(pk).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))) {
+      const d = join(pk, k);
+      if (!statSync(d).isDirectory()) continue;
+      const pngs = (p) => (existsSync(p) ? readdirSync(p).filter((f) => f.endsWith('.png')).sort() : []);
+      const size = (p, l) => l.reduce((s, f) => s + statSync(join(p, f)).size, 0);
+      const n = pngs(d), s = pngs(join(d, 's'));
+      if (!n.length) continue;
+      const nb = size(d, n), sb = size(join(d, 's'), s);
+      const names = (l) => l.map((f) => f.slice(0, -4));
+      const same = (l) => names(l).join() === ANIMS.join();
+      const e = [nb, sb];
+      if (!same(n) || (s.length && !same(s))) { e.push(names(n)); if (s.length) e.push(names(s)); }
+      art.dex[k] = e;
+      art.bytes += nb + sb;
+    }
+  }
+  const v = hash.digest('hex').slice(0, 12);
+  writeFileSync(join(dir, 'nexus-offline.json'), JSON.stringify({ v, code: { files: pre.length + 1, bytes }, art }) + '\n');
+  pre.push('nexus-offline.json');
+  const list = ['./', ...pre];
+  writeFileSync(join(dir, 'sw.js'), SW_SOURCE.replace('__V__', v).replace('__PRE__', JSON.stringify(list)));
+  return { files: list.length, bytes, art: art.bytes };
+}
+function walkAll(d) {
+  const acc = [];
+  for (const f of readdirSync(d)) {
+    const p = join(d, f);
+    if (statSync(p).isDirectory()) acc.push(...walkAll(p)); else acc.push(p);
+  }
+  return acc;
+}
 function walk(dir) {
   const acc = [];
   for (const f of readdirSync(dir)) {

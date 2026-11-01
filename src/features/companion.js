@@ -155,6 +155,33 @@
       pm.onRun('end', () => { comp = null; });
       pm.onTick(KEY, tick);
       pm.drawables(KEY, drawables);
+      // Botón "Usar como compañero" en la ficha de la Pokédex.
+      NX.onReady(() => {
+        const det = document.getElementById('dex-detail');
+        if (!det) return;
+        const dexOfDetail = () => {
+          const first = det.querySelector('.center > div');
+          const m = first && /(\d{1,4})/.exec(first.textContent);
+          return m ? +m[1] : 0;
+        };
+        const paint = () => {
+          let box = det.querySelector('.nx-comp-pick');
+          const dex = dexOfDetail();
+          if (!NX.isOn(KEY) || !dex || !owned().includes(dex)) { if (box) box.remove(); return; }
+          const cur = +NX.store.get(S_DEX, 0) || 0;
+          const sig = dex + '|' + cur;
+          if (box && box.dataset.sig === sig) return;
+          if (!box) { box = document.createElement('div'); box.className = 'row nx-comp-pick'; box.style.cssText = 'gap:6px;margin:6px 0;justify-content:center'; det.appendChild(box); }
+          box.dataset.sig = sig;
+          box.innerHTML = cur === dex
+            ? '<button type="button" class="btn small gold" disabled>Es tu compañero</button><button type="button" class="btn small ghost" data-x>Quitar (al azar)</button>'
+            : '<button type="button" class="btn small" data-use>Usar como compañero</button>';
+          const use = box.querySelector('[data-use]'), x = box.querySelector('[data-x]');
+          if (use) use.addEventListener('click', () => { NX.store.set(S_DEX, dex); NX.toast('Compañero elegido para la próxima partida'); paint(); });
+          if (x) x.addEventListener('click', () => { NX.store.set(S_DEX, 0); NX.toast('Compañero al azar entre los tuyos'); paint(); });
+        };
+        new MutationObserver(() => { try { paint(); } catch (err) { NX.trip(KEY, err); } }).observe(det, { childList: true });
+      });
       // Apagado a mitad de partida: desaparece; encendido: aparece.
       setInterval(() => {
         const p = NX.runs.current();

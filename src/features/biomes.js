@@ -105,14 +105,20 @@
   function planRun(orig) {
     ensure();
     const mine = NAMES.map(idx).filter((i) => i >= 0);
-    const sel = String(opt('start', ''));
-    let start = null;
-    if (sel === 'random') start = mine[Math.floor(Math.random() * mine.length)];
-    else if (sel) { const i = idx(sel); if (i >= 0) start = i; }
-    let list = null;
-    if (opt('rot', true)) {
-      const o = [0, 1, 2].map((s) => orig(s));
-      list = [o[0], mine[0], o[1], mine[1], o[2], mine[2], mine[3], mine[4]].filter((v) => v != null && v >= 0);
+    const o = [0, 1, 2].map((s) => orig(s));
+    // Por defecto ('any') cada partida empieza en un mapa al azar entre los del
+    // juego y los nuevos, y el resto de la rotación también sale en orden aleatorio.
+    const sel = String(opt('start', 'any'));
+    let start = null, list = null;
+    if (sel === 'any') {
+      const pool = [...new Set([...o, ...mine])].filter((v) => v != null && v >= 0);
+      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+      start = pool[0];
+      if (opt('rot', true)) list = pool;
+    } else {
+      if (sel === 'random') start = mine[Math.floor(Math.random() * mine.length)];
+      else if (sel) { const i = idx(sel); if (i >= 0) start = i; }
+      if (opt('rot', true)) list = [o[0], mine[0], o[1], mine[1], o[2], mine[2], mine[3], mine[4]].filter((v) => v != null && v >= 0);
     }
     return { start, list, lock: !!opt('lock', false) && start != null, k: list && start != null ? Math.max(0, list.indexOf(start)) : 0 };
   }
@@ -264,7 +270,7 @@
       el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
       el.appendChild(NX.ui.note('Cinco biomas nuevos: ' + NAMES.join(', ') + '. Cada uno trae sus propios enemigos, jefes y clima.'));
       el.appendChild(NX.ui.toggle('Sumarlos a la rotación de etapas', 'biome:rot', true));
-      el.appendChild(NX.ui.select('Empezar en bioma', 'biome:start', [['', 'El del juego'], ['random', 'Uno nuevo al azar'], ...NAMES.map((n) => [n, n])], ''));
+      el.appendChild(NX.ui.select('Empezar en bioma', 'biome:start', [['any', 'Cualquiera al azar'], ['', 'El del juego'], ['random', 'Uno nuevo al azar'], ...NAMES.map((n) => [n, n])], 'any'));
       el.appendChild(NX.ui.toggle('Quedarse en el bioma inicial toda la partida', 'biome:lock', false));
       el.appendChild(NX.ui.toggle('Enemigos propios de cada bioma', 'biome:foes', true));
       el.appendChild(NX.ui.toggle('Jefes del bioma', 'biome:boss', true));

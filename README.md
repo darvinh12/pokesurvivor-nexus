@@ -57,6 +57,14 @@ Los ajustes se abren con **Alt + N** o con el botón "Nexus" del menú principal
 | Partida | Biomas nuevos, terrenos con efectos y objetos del mapa (reloj, imán, bomba, baya) | |
 | Modos | Mapas: Arena, Islas y Mazmorra por salas | Modos Nexus |
 | Menús | Progreso Nexus: cartas de partida, maldiciones, tienda, retos con Pokémon secretos, jardín de bayas y límite superado | botón en el menú |
+| Cámara y mapa | Choques sin atascos, botín al romper objetos, hierba que se mece y puentes sobre canales | |
+| Estilo | Aspecto del mapa: decoración por bioma, agua y lava animadas, luz y sombras, con calidad ajustable | |
+| Partida | Mapa inicial y rotación de biomas al azar | |
+| Menús | Calculadora de gacha | |
+| Partida | Jugar otra vez, carta automática opcional, recordatorio de descanso, cofres lejanos en el minimapa e imán al terminar una marea | |
+| Estilo | Temas del HUD | |
+| General | Reasignar teclas, sin videos ni novedades del oficial, compañero desde la ficha de la Pokédex | |
+| Datos | Modo sin conexión en el teléfono | |
 | Rendimiento | Resolución, pixel art nítido, límite de FPS y efectos reducidos | |
 
 ## Cómo se actualiza

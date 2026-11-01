@@ -1,13 +1,13 @@
-/*! PokeSurvivor Nexus v0.4.0 */
+/*! PokeSurvivor Nexus v0.5.0 */
 (() => {
 'use strict';
 if (window.__nexus) return;
 // El sitio público bloquea las extensiones a propósito. Nexus solo corre en el
 // laboratorio local, así que aquí se queda inactivo.
 if (location.hostname === 'pokesurvivor.com' || location.hostname.endsWith('.pokesurvivor.com')) { console.info('[nexus] inactivo en el sitio público; usa el laboratorio local'); return; }
-const NX = { version: '0.4.0' };
+const NX = { version: '0.5.0' };
 window.__nexus = {
-  version: '0.4.0',
+  version: '0.5.0',
   status: () => NX.featureList(),
   ns: () => NX.ns,
 };
@@ -993,14 +993,20 @@ NX.keys.bind((e) => e.key === 'Escape' && panel && !panel.classList.contains('hi
   function planRun(orig) {
     ensure();
     const mine = NAMES.map(idx).filter((i) => i >= 0);
-    const sel = String(opt('start', ''));
-    let start = null;
-    if (sel === 'random') start = mine[Math.floor(Math.random() * mine.length)];
-    else if (sel) { const i = idx(sel); if (i >= 0) start = i; }
-    let list = null;
-    if (opt('rot', true)) {
-      const o = [0, 1, 2].map((s) => orig(s));
-      list = [o[0], mine[0], o[1], mine[1], o[2], mine[2], mine[3], mine[4]].filter((v) => v != null && v >= 0);
+    const o = [0, 1, 2].map((s) => orig(s));
+    // Por defecto ('any') cada partida empieza en un mapa al azar entre los del
+    // juego y los nuevos, y el resto de la rotación también sale en orden aleatorio.
+    const sel = String(opt('start', 'any'));
+    let start = null, list = null;
+    if (sel === 'any') {
+      const pool = [...new Set([...o, ...mine])].filter((v) => v != null && v >= 0);
+      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+      start = pool[0];
+      if (opt('rot', true)) list = pool;
+    } else {
+      if (sel === 'random') start = mine[Math.floor(Math.random() * mine.length)];
+      else if (sel) { const i = idx(sel); if (i >= 0) start = i; }
+      if (opt('rot', true)) list = [o[0], mine[0], o[1], mine[1], o[2], mine[2], mine[3], mine[4]].filter((v) => v != null && v >= 0);
     }
     return { start, list, lock: !!opt('lock', false) && start != null, k: list && start != null ? Math.max(0, list.indexOf(start)) : 0 };
   }
@@ -1152,7 +1158,7 @@ NX.keys.bind((e) => e.key === 'Escape' && panel && !panel.classList.contains('hi
       el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
       el.appendChild(NX.ui.note('Cinco biomas nuevos: ' + NAMES.join(', ') + '. Cada uno trae sus propios enemigos, jefes y clima.'));
       el.appendChild(NX.ui.toggle('Sumarlos a la rotación de etapas', 'biome:rot', true));
-      el.appendChild(NX.ui.select('Empezar en bioma', 'biome:start', [['', 'El del juego'], ['random', 'Uno nuevo al azar'], ...NAMES.map((n) => [n, n])], ''));
+      el.appendChild(NX.ui.select('Empezar en bioma', 'biome:start', [['any', 'Cualquiera al azar'], ['', 'El del juego'], ['random', 'Uno nuevo al azar'], ...NAMES.map((n) => [n, n])], 'any'));
       el.appendChild(NX.ui.toggle('Quedarse en el bioma inicial toda la partida', 'biome:lock', false));
       el.appendChild(NX.ui.toggle('Enemigos propios de cada bioma', 'biome:foes', true));
       el.appendChild(NX.ui.toggle('Jefes del bioma', 'biome:boss', true));
@@ -3540,6 +3546,173 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
   });
 })();
 
+// ---- features/collision.js
+// Choques sin atascos. El juego mueve al jugador (x += v·dt) y llama a
+// World.collide(jugador), que lo saca de cada tile de muro (círculo contra
+// caja) y de cada objeto sólido del tile (círculo contra círculo) en dos
+// pasadas. Eso ya desliza en diagonal, pero de frente contra un árbol, una
+// roca o el borde de un muro el avance se queda en cero, y entre dos objetos
+// cercanos el jugador tiembla. Este módulo envuelve World.collide solo para el
+// jugador local:
+// - radio de choque opcionalmente menor que el visual;
+// - subpasos si el movimiento del cuadro es largo (teléfonos lentos);
+// - rodeo: si el avance queda bloqueado, busca a cada lado un punto libre
+//   desde el que se pueda seguir hacia adelante y desplaza al jugador hacia
+//   ese lado sin superar su velocidad. Contra un muro recto no hay punto
+//   libre adelante, así que no desliza de lado;
+// - empuje suave: un solape grande se resuelve en varios cuadros y, si queda
+//   encajado, se abre paso hacia el hueco libre más cercano.
+// Usa el propio World.collide sobre un objeto de prueba reutilizado, así que
+// respeta muros, objetos y arenas de todos los biomas y mapas. Apagado, la
+// función original queda intacta.
+(() => {
+  const KEY = 'collision';
+  const ASSIST = { 0: 0, 1: 1.2, 2: 2.1, 3: 3 };
+  const DIRS = [];
+  for (let i = 0; i < 12; i++) DIRS.push([Math.cos((i / 12) * Math.PI * 2), Math.sin((i / 12) * Math.PI * 2)]);
+  const RINGS = [3, 6, 10, 15, 21, 28];
+
+  let ns = null, W = null, orig = null, PlayerCls = null;
+  const probe = { x: 0, y: 0, r: 10 };
+  const stats = { calls: 0, steers: 0, unwedges: 0, softs: 0 };
+  let cfgT = -1e9, kRad = 0.85, reach = 2.1, soft = true;
+
+  function cfg() {
+    const t = performance.now();
+    if (t - cfgT < 500) return;
+    cfgT = t;
+    kRad = NX.clamp(+NX.store.get('coll2:radius', 85) || 85, 60, 100) / 100;
+    reach = ASSIST[NX.store.get('coll2:assist', 2)] != null ? ASSIST[NX.store.get('coll2:assist', 2)] : 2.1;
+    soft = NX.store.get('coll2:soft', true) !== false;
+  }
+
+  // true si un círculo en (x, y) de radio r toca muro u objeto sólido.
+  function blocked(x, y, r) {
+    probe.x = x; probe.y = y; probe.r = r;
+    return orig.call(W, probe);
+  }
+
+  // Rodeo: busca a los lados un punto libre desde el que se pueda avanzar.
+  function steer(o, px, py, ux, uy, len, rc) {
+    const ax = o.x - px, ay = o.y - py;
+    const got2 = ax * ax + ay * ay;
+    if (got2 > len * len * 0.49) return; // ya avanza bastante (deslizamiento normal)
+    // Búsqueda fallida hace poco en la misma dirección: no repetir cada cuadro.
+    if (o._nxsf > 0 && ux * o._nxsu + uy * o._nxsv > 0.985) { o._nxsf--; return; }
+    const lat = -ax * uy + ay * ux;
+    const s0 = lat > 0.05 ? 1 : lat < -0.05 ? -1 : (o._nxside || 1);
+    const maxShift = rc * reach + 4, stepM = Math.max(4, rc * 0.4);
+    const look = rc + 4 + len, tr = rc - 0.5;
+    let openA = true, openB = true;
+    for (let m = stepM; m <= maxShift + 0.01; m += stepM) {
+      for (let k = 0; k < 2; k++) {
+        if (k ? !openB : !openA) continue;
+        const s = k ? -s0 : s0;
+        const qx = o.x - uy * s * m, qy = o.y + ux * s * m;
+        if (blocked(qx, qy, tr)) { if (k) openB = false; else openA = false; continue; }
+        if (blocked(qx + ux * look, qy + uy * look, tr)) continue;
+        const free = Math.sqrt(Math.max(0, len * len - got2));
+        const step = Math.min(m, Math.max(len * 0.35, free * 0.95));
+        o.x -= uy * s * step;
+        o.y += ux * s * step;
+        orig.call(W, o);
+        o._nxside = s;
+        o._nxsf = 0;
+        stats.steers++;
+        return;
+      }
+      if (!openA && !openB) break;
+    }
+    o._nxsf = 15; o._nxsu = ux; o._nxsv = uy;
+  }
+
+  // Si sigue encajado (solape real tras resolver), avanza hacia el hueco libre más cercano.
+  function unwedge(o, rc) {
+    if (!blocked(o.x, o.y, rc - 1.5)) return;
+    const tr = rc - 0.5;
+    for (const rad of RINGS) {
+      for (const [cx, cy] of DIRS) {
+        const x = o.x + cx * rad, y = o.y + cy * rad;
+        if (blocked(x, y, tr)) continue;
+        const mv = Math.min(rad, 2.5 + rad * 0.3);
+        o.x += cx * mv; o.y += cy * mv;
+        stats.unwedges++;
+        return;
+      }
+    }
+  }
+
+  function solve(o) {
+    cfg();
+    stats.calls++;
+    const r0 = o.r, rc = r0 * kRad;
+    const ax = o.x, ay = o.y;
+    const px = o._nxpx, py = o._nxpy;
+    const dx = ax - px, dy = ay - py, len = Math.sqrt(dx * dx + dy * dy);
+    const tele = o._nxok !== 1 || !(len <= Math.max(48, r0 * 3));
+    let hit = false;
+    o.r = rc;
+    try {
+      if (tele || len < 1e-4) {
+        hit = orig.call(W, o);
+      } else {
+        const n = Math.min(4, Math.ceil(len / Math.max(2, rc * 0.5)));
+        if (n > 1) {
+          o.x = px; o.y = py;
+          for (let i = 0; i < n; i++) { o.x += dx / n; o.y += dy / n; if (orig.call(W, o)) hit = true; }
+        } else hit = orig.call(W, o);
+        // Empuje suave: un solape grande (objeto que apareció encima, cambio de
+        // tamaño) se resuelve en varios cuadros en vez de dar un salto.
+        if (soft && hit) {
+          const qx = o.x - ax, qy = o.y - ay, ql = Math.sqrt(qx * qx + qy * qy);
+          if (ql > len + 8) {
+            const f = Math.max(0.35, (len + 6) / ql);
+            const nx = ax + qx * f, ny = ay + qy * f;
+            if (!W.isWall(nx, ny)) { o.x = nx; o.y = ny; stats.softs++; }
+          }
+        }
+        if (hit && reach > 0) steer(o, px, py, dx / len, dy / len, len, rc);
+      }
+      if (soft && hit) unwedge(o, rc);
+    } finally {
+      o.r = r0;
+    }
+    o._nxpx = o.x; o._nxpy = o.y; o._nxok = 1;
+    return hit;
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Choques sin atascos',
+    needs: (n) => n.World && typeof n.World.collide === 'function' && typeof n.World.isWall === 'function' && typeof n.Player === 'function',
+    setup(n) {
+      ns = n; W = n.World; orig = W.collide; PlayerCls = n.Player;
+      W.collide = function (o) {
+        if (!o || !(o instanceof PlayerCls) || o.remote || !NX.isOn(KEY) || (ns.Coop && ns.Coop.active && o !== ns.Coop.local)) {
+          if (o && o._nxok) o._nxok = 0;
+          return orig.apply(this, arguments);
+        }
+        try { return solve(o); } catch (err) { NX.trip(KEY, err); o._nxok = 0; return orig.apply(this, arguments); }
+      };
+      NX.collision = { stats: () => ({ ...stats }), radius: () => kRad, original: (o) => orig.call(W, o) };
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Cámara y mapa',
+    title: 'Choques sin atascos',
+    keywords: 'colisión choques atascos trabar árboles rocas muros esquinas deslizar rodear radio',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.range('Radio de choque del jugador', 'coll2:radius', 60, 100, 5, 85, (v) => v + ' %', () => { cfgT = -1e9; }));
+      el.appendChild(NX.ui.select('Ayuda para rodear obstáculos', 'coll2:assist', [['0', 'Sin ayuda'], ['1', 'Suave'], ['2', 'Normal'], ['3', 'Amplia']], '2', () => { cfgT = -1e9; }));
+      el.appendChild(NX.ui.toggle('Empuje suave para salir de solapes', 'coll2:soft', true, () => { cfgT = -1e9; }));
+      el.appendChild(NX.ui.note('Al chocar de frente con un árbol, una roca o el borde de un muro, el jugador se desliza hacia el lado libre en vez de quedarse trabado. Contra un muro recto no desliza de lado. Solo afecta al jugador local.'));
+    },
+  });
+})();
+
 // ---- features/colorblind.js
 // Modo daltónico: corrección de color (daltonización) con un filtro SVG
 // feColorMatrix aplicado por CSS al canvas del juego o a toda la página. Lo
@@ -3890,6 +4063,33 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
       pm.onRun('end', () => { comp = null; });
       pm.onTick(KEY, tick);
       pm.drawables(KEY, drawables);
+      // Botón "Usar como compañero" en la ficha de la Pokédex.
+      NX.onReady(() => {
+        const det = document.getElementById('dex-detail');
+        if (!det) return;
+        const dexOfDetail = () => {
+          const first = det.querySelector('.center > div');
+          const m = first && /(\d{1,4})/.exec(first.textContent);
+          return m ? +m[1] : 0;
+        };
+        const paint = () => {
+          let box = det.querySelector('.nx-comp-pick');
+          const dex = dexOfDetail();
+          if (!NX.isOn(KEY) || !dex || !owned().includes(dex)) { if (box) box.remove(); return; }
+          const cur = +NX.store.get(S_DEX, 0) || 0;
+          const sig = dex + '|' + cur;
+          if (box && box.dataset.sig === sig) return;
+          if (!box) { box = document.createElement('div'); box.className = 'row nx-comp-pick'; box.style.cssText = 'gap:6px;margin:6px 0;justify-content:center'; det.appendChild(box); }
+          box.dataset.sig = sig;
+          box.innerHTML = cur === dex
+            ? '<button type="button" class="btn small gold" disabled>Es tu compañero</button><button type="button" class="btn small ghost" data-x>Quitar (al azar)</button>'
+            : '<button type="button" class="btn small" data-use>Usar como compañero</button>';
+          const use = box.querySelector('[data-use]'), x = box.querySelector('[data-x]');
+          if (use) use.addEventListener('click', () => { NX.store.set(S_DEX, dex); NX.toast('Compañero elegido para la próxima partida'); paint(); });
+          if (x) x.addEventListener('click', () => { NX.store.set(S_DEX, 0); NX.toast('Compañero al azar entre los tuyos'); paint(); });
+        };
+        new MutationObserver(() => { try { paint(); } catch (err) { NX.trip(KEY, err); } }).observe(det, { childList: true });
+      });
       // Apagado a mitad de partida: desaparece; encendido: aparece.
       setInterval(() => {
         const p = NX.runs.current();
@@ -6155,6 +6355,355 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   });
 })();
 
+// ---- features/gacha-calc.js
+// Calculadora de gacha: probabilidad de conseguir un Pokémon concreto, una
+// legendaria que falte o cualquiera que falte en un banner con N tiradas,
+// cuántas tiradas hacen falta para el 50 %, 90 % y 99 %, y cuántos nuevos se
+// esperan. No gasta nada: solo lee el guardado.
+//
+// Reproduce Gacha.pull del juego (versión b742e43):
+//  - Cada tirada suma 1 a save.pity[banner]. Al llegar a PITY_5 (70) sale
+//    legendaria segura y la piedad vuelve a 0 (también con una legendaria
+//    natural).
+//  - En una tanda de diez, la décima tirada sortea solo entre épica y
+//    legendaria si en la tanda aún no salió nada de rareza 4 o más.
+//  - La rareza sale de Gacha.RATES; si el banner no tiene Pokémon de esa
+//    rareza se usa la más cercana (0, -1, +1, -2, +2...).
+//  - Dentro de la rareza, uniforme. Si sale shiny (Gacha.shinyRate) de uno
+//    cuyo shiny ya tienes, se cambia por otro con shiny que te falte.
+// El cálculo es exacto por programación dinámica sobre (piedad, épica ya
+// vista en la tanda). Los nuevos esperados suman la probabilidad de cada
+// faltante (linealidad de la esperanza).
+(() => {
+  const KEY = 'gcalc';
+  const MAX_PULLS = 3000;
+  const ns = () => NX.ns;
+  const $ = (id) => document.getElementById(id);
+  const T = (s) => { try { return typeof ns().T === 'function' ? ns().T(s) : s; } catch (_) { return s; } };
+  const save = () => ns() && ns().DB && ns().DB.save;
+  const pct = (p) => {
+    if (!(p > 0)) return '0 %';
+    if (p >= 0.9995) return p >= 1 ? '100 %' : '> 99,9 %';
+    const v = p * 100;
+    return (v < 0.1 ? v.toFixed(3) : v < 10 ? v.toFixed(2) : v.toFixed(1)).replace('.', ',') + ' %';
+  };
+  const fmtN = (n) => (+n || 0).toLocaleString('es-VE');
+
+  // ---- modelo
+  function banners() {
+    const G = ns().Gacha;
+    const list = [...G.BANNERS];
+    if (G.SPOOKY && G.isOpen(G.SPOOKY.gen)) list.push(G.SPOOKY);
+    return list;
+  }
+  // Datos del banner: pools por rareza, tasas, piedad y estado del guardado.
+  function model(gen) {
+    const N = ns(), G = N.Gacha, sv = save() || {};
+    const owned = sv.owned || {}, shinyOwned = sv.shiny || {};
+    const pools = {};
+    for (let r = 1; r <= 5; r++) pools[r] = G.pool(r, gen) || [];
+    // Rareza sorteada -> rareza real (la más cercana con Pokémon).
+    const eff = {};
+    for (let r = 1; r <= 5; r++) {
+      eff[r] = r;
+      for (const d of [0, -1, 1, -2, 2, -3, 3, -4, 4]) {
+        const x = r + d;
+        if (x >= 1 && x <= 5 && pools[x].length) { eff[r] = x; break; }
+      }
+    }
+    const hasShiny = (dex) => { try { return !!N.Sprites.hasShiny(dex); } catch (_) { return false; } };
+    let sr = 0.01;
+    try { sr = G.shinyRate(sv, gen); } catch (_) { sr = 0.01; }
+    // Probabilidad de que una tirada de rareza r termine en cada Pokémon.
+    const single = {};
+    for (let r = 1; r <= 5; r++) {
+      const L = pools[r], n = L.length;
+      const S = L.filter((p) => hasShiny(p.dex));
+      const Os = S.filter((p) => shinyOwned[p.dex]);
+      const A = S.length - Os.length;
+      const m = new Map();
+      for (const p of L) {
+        const inS = hasShiny(p.dex), inOs = inS && !!shinyOwned[p.dex];
+        let q = (1 / n) * (1 - (inOs && A > 0 ? sr : 0));
+        if (inS && !inOs && A > 0) q += (Os.length / n) * sr / A;
+        m.set(p.dex, q);
+      }
+      single[r] = m;
+    }
+    const rates = G.RATES.map(([r, w]) => [r, +w]);
+    const p0 = Math.max(0, Math.min(G.PITY_5 || 70, +((sv.pity || {})[gen]) || 0));
+    return { gen, G, pools, eff, single, rates, pity5: G.PITY_5 || 70, p0, owned, sr };
+  }
+  // Distribución de rareza real para un sorteo con rareza mínima "min".
+  function rollDist(M, min) {
+    const list = M.rates.filter(([r]) => r >= min);
+    const tot = list.reduce((s, [, w]) => s + w, 0);
+    const out = [0, 0, 0, 0, 0, 0];
+    for (const [r, w] of list) out[M.eff[r]] += w / tot;
+    return out;
+  }
+  // q[r]: probabilidad de que una tirada de rareza real r dé el objetivo.
+  function qFor(M, dexes) {
+    const q = [0, 0, 0, 0, 0, 0];
+    for (let r = 1; r <= 5; r++) for (const d of dexes) q[r] += M.single[r].get(d) || 0;
+    return q;
+  }
+  // Curva acumulada: cdf[i] = probabilidad de haberlo conseguido en i tiradas.
+  function curve(M, q, pulls, batch) {
+    const P5 = M.pity5;
+    const base = rollDist(M, 1), epic = rollDist(M, 4), leg = [0, 0, 0, 0, 0, 1];
+    let cur = new Float64Array((P5 + 1) * 2), nxt = new Float64Array((P5 + 1) * 2);
+    cur[M.p0 * 2] = 1;
+    const cdf = new Float64Array(pulls + 1);
+    let hit = 0;
+    for (let i = 0; i < pulls; i++) {
+      nxt.fill(0);
+      const last = batch && i % 10 === 9;
+      for (let p = 0; p <= P5; p++) {
+        for (let s = 0; s < 2; s++) {
+          const m = cur[p * 2 + s];
+          if (m < 1e-300) continue;
+          const p1 = Math.min(P5, p + 1);
+          const dist = p1 >= P5 ? leg : last && !s ? epic : base;
+          for (let r = 1; r <= 5; r++) {
+            const a = dist[r];
+            if (!a) continue;
+            const mass = m * a;
+            hit += mass * q[r];
+            const np = r === 5 ? 0 : p1;
+            const ns2 = !batch || last ? 0 : (s || r >= 4 ? 1 : 0);
+            nxt[np * 2 + ns2] += mass * (1 - q[r]);
+          }
+        }
+      }
+      [cur, nxt] = [nxt, cur];
+      cdf[i + 1] = hit;
+    }
+    return cdf;
+  }
+  const need = (cdf, p, step) => {
+    for (let i = step; i < cdf.length; i += step) if (cdf[i] >= p) return i;
+    return null;
+  };
+
+  // Tiradas que dan los tickets actuales: los ×10 son tandas; los normales,
+  // tandas de diez y el resto sueltas.
+  function ticketPulls() {
+    const t = (save() && save().tickets) || {};
+    const t10 = Math.max(0, +t.t10 || 0), t1 = Math.max(0, +t.t1 || 0);
+    return { t10, t1, pulls: t10 * 10 + t1 };
+  }
+
+  // target: 'miss' | 'leg' | número de Pokédex
+  function compute(gen, target, pulls, batch) {
+    const M = model(gen);
+    const all = [];
+    for (let r = 1; r <= 5; r++) for (const p of M.pools[r]) all.push(p);
+    const missing = all.filter((p) => !M.owned[p.dex]);
+    let dexes;
+    if (target === 'miss') dexes = missing.map((p) => p.dex);
+    else if (target === 'leg') dexes = missing.filter((p) => p.rarity === 5 || M.pools[5].includes(p)).map((p) => p.dex);
+    else dexes = [+target];
+    const res = { M, missing, total: all.length, dexes, pulls };
+    const span = Math.max(pulls, 10);
+    const step = batch ? 10 : 1;
+    const q = qFor(M, dexes);
+    // Curva larga para los umbrales; la tirada pedida sale de la misma curva.
+    const cdf = dexes.length && q.some((x) => x > 0) ? curve(M, q, Math.max(span, MAX_PULLS), batch) : null;
+    res.p = cdf ? cdf[Math.min(pulls, cdf.length - 1)] : 0;
+    res.need = cdf ? [0.5, 0.9, 0.99].map((x) => need(cdf, x, step)) : [null, null, null];
+    // Nuevos esperados: un faltante representativo por grupo de q idéntica.
+    const groups = new Map();
+    for (const p of missing) {
+      const qq = qFor(M, [p.dex]);
+      const k = qq.map((x) => x.toPrecision(12)).join('|');
+      const g = groups.get(k) || { q: qq, n: 0 };
+      g.n++;
+      groups.set(k, g);
+    }
+    let ev = 0;
+    for (const g of groups.values()) {
+      if (!g.q.some((x) => x > 0)) continue;
+      const c = curve(M, g.q, pulls, batch);
+      ev += g.n * c[pulls];
+    }
+    res.expectedNew = ev;
+    return res;
+  }
+
+  // ---- interfaz
+  NX.css(`.nx-gcalc{margin-top:8px}
+.nx-gcalc summary{cursor:pointer;font-weight:700}
+.nx-gcalc .gc-f{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;margin:8px 0 6px;font-size:13px}
+.nx-gcalc select,.nx-gcalc input{font:inherit;font-size:13px;background:#0b1838;color:#fff;border:1px solid #5b83d6;border-radius:5px;padding:3px 6px;min-width:0;max-width:100%;text-shadow:none}
+.nx-gcalc input[type=number]{width:110px}
+.nx-gcalc .gc-big{font-size:18px;color:var(--gold,#ffd23f);font-weight:700}
+.nx-gcalc .gc-r{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:6px 0}
+.nx-gcalc .gc-r div{background:rgba(0,0,0,.25);border-radius:6px;padding:4px 6px;text-align:center;font-size:12px}
+.nx-gcalc .gc-r b{display:block;font-size:15px;color:#fff}
+.nx-gcalc .gc-n{font-size:12px;opacity:.85;margin:3px 0}
+.nx-gcalc .gc-btns{display:flex;gap:6px;flex-wrap:wrap}
+.nx-gcalc .gc-btns button{font:inherit;font-size:12px;color:inherit;background:none;border:1px solid currentColor;border-radius:4px;padding:1px 7px;cursor:pointer}
+@media (pointer:coarse){.nx-gcalc select,.nx-gcalc input{min-height:36px;font-size:15px}.nx-gcalc .gc-btns button{min-height:34px}}`);
+
+  // Monta la calculadora en "box". getGen() devuelve el banner (o null para
+  // mostrar un selector propio). Devuelve { refresh }.
+  function mount(box, getGen) {
+    const st = { gen: null, target: NX.store.get('gcalc:target', 'miss'), pulls: null, batch: NX.store.get('gcalc:batch', true) !== false, sig: '' };
+    box.innerHTML = `<div class="gc-f">
+      ${getGen ? '' : '<span>Banner</span><select data-k="gen"></select>'}
+      <span>Objetivo</span><select data-k="target"></select>
+      <span>Tiradas</span><span><input type="number" min="1" max="${MAX_PULLS}" step="1" data-k="pulls"> <span class="gc-btns" style="display:inline-flex"><button type="button" data-p="t">Mis tickets</button><button type="button" data-p="10">10</button><button type="button" data-p="100">100</button></span></span>
+      <span>Modo</span><select data-k="batch"><option value="1">De diez en diez (épica garantizada)</option><option value="0">Sueltas</option></select>
+    </div><div class="gc-out"></div>`;
+    const sel = (k) => box.querySelector(`[data-k="${k}"]`);
+    const out = box.querySelector('.gc-out');
+    for (const ev of ['keydown', 'keyup', 'keypress']) box.addEventListener(ev, (e) => e.stopPropagation());
+
+    function fillGens() {
+      const g = sel('gen');
+      if (!g) return;
+      const list = banners();
+      const keep = st.gen != null ? st.gen : +NX.store.get('gcalc:gen', list[0].gen);
+      g.innerHTML = list.map((b) => `<option value="${b.gen}">${NX.esc(T(b.name))}</option>`).join('');
+      g.value = String(list.some((b) => b.gen === keep) ? keep : list[0].gen);
+      st.gen = +g.value;
+    }
+    function fillTargets() {
+      const M = model(st.gen), sv = save() || {};
+      const all = [];
+      for (let r = 5; r >= 1; r--) for (const p of M.pools[r]) all.push(p);
+      const miss = all.filter((p) => !(sv.owned || {})[p.dex]);
+      const have = all.filter((p) => (sv.owned || {})[p.dex]);
+      const RN = M.G.RARITY_NAME || {};
+      const opt = (p) => `<option value="${p.dex}">#${String(p.dex).padStart(3, '0')} ${NX.esc(p.name)} · ${NX.esc(RN[p.rarity] || '')}</option>`;
+      const legMiss = miss.filter((p) => M.pools[5].includes(p)).length;
+      const t = sel('target');
+      t.innerHTML = `<option value="miss">Cualquiera que me falte (${miss.length})</option>
+        <option value="leg">Cualquier legendaria que me falte (${legMiss})</option>
+        ${miss.length ? `<optgroup label="Me faltan">${miss.map(opt).join('')}</optgroup>` : ''}
+        ${have.length ? `<optgroup label="Ya los tengo">${have.map(opt).join('')}</optgroup>` : ''}`;
+      const valid = [...t.options].some((o) => o.value === String(st.target));
+      t.value = valid ? String(st.target) : 'miss';
+      st.target = t.value;
+    }
+    function run() {
+      if (!save()) { out.innerHTML = '<p class="gc-n">Entra al juego para usar la calculadora.</p>'; return; }
+      const tk = ticketPulls();
+      if (st.pulls == null) st.pulls = Math.max(10, Math.min(MAX_PULLS, tk.pulls || 10));
+      sel('pulls').value = st.pulls;
+      sel('batch').value = st.batch ? '1' : '0';
+      let r;
+      try { r = compute(st.gen, st.target === 'miss' || st.target === 'leg' ? st.target : +st.target, st.pulls, st.batch); } catch (err) { NX.trip(KEY, err); out.innerHTML = '<p class="gc-n">No se pudo calcular.</p>'; return; }
+      const M = r.M;
+      const left = M.pity5 - M.p0;
+      const n = (v) => (v == null ? `más de ${fmtN(MAX_PULLS)}` : fmtN(v));
+      const noTarget = !r.dexes.length;
+      const tName = st.target === 'miss' ? 'uno nuevo' : st.target === 'leg' ? 'una legendaria nueva' : ((ns().DEX_BY || {})[+st.target] || {}).name || '#' + st.target;
+      const had = st.target !== 'miss' && st.target !== 'leg' && M.owned[+st.target];
+      out.innerHTML = noTarget
+        ? `<p class="gc-n">No te falta ningún Pokémon de ese tipo en este banner.</p>`
+        : `<div>Con <b>${fmtN(st.pulls)}</b> tiradas, probabilidad de conseguir ${NX.esc(tName)}: <span class="gc-big">${pct(r.p)}</span></div>
+          ${had ? '<p class="gc-n">Ya lo tienes: una copia repetida se convierte en monedas.</p>' : ''}
+          <div class="gc-r"><div>50 %<b>${n(r.need[0])}</b></div><div>90 %<b>${n(r.need[1])}</b></div><div>99 %<b>${n(r.need[2])}</b></div></div>`;
+      out.insertAdjacentHTML('beforeend', `<p class="gc-n">Nuevos esperados con ${fmtN(st.pulls)} tiradas: <b>${r.expectedNew.toFixed(2).replace('.', ',')}</b> de ${r.missing.length} que te faltan (${r.total} en el banner).</p>
+        <p class="gc-n">Tus tickets: ${fmtN(tk.t10)} ×10 y ${fmtN(tk.t1)} normales = ${fmtN(tk.pulls)} tiradas. Piedad ${M.p0}/${M.pity5}: legendaria garantizada en ${left} tiradas. Shiny ${(M.sr * 100).toFixed(0)} %.</p>
+        <p class="gc-n">Cálculo exacto con las tasas del juego (${M.rates.slice().reverse().map(([rr, w]) => (M.G.RARITY_NAME || {})[rr] + ' ' + String(w).replace('.', ',') + ' %').join(' · ')}). No gasta nada.</p>`);
+    }
+    function refresh(force) {
+      if (!ns() || !ns().Gacha) return;
+      const g = getGen ? getGen() : null;
+      if (getGen) { if (g == null) return; st.gen = g; } else if (st.gen == null) fillGens();
+      const sv = save() || {};
+      const tk = ticketPulls();
+      const sig = [st.gen, Object.keys(sv.owned || {}).length, Object.keys(sv.shiny || {}).length, (sv.pity || {})[st.gen] || 0, tk.t10, tk.t1].join('|');
+      if (!force && sig === st.sig) return;
+      const genChanged = st.sig.split('|')[0] !== String(st.gen);
+      st.sig = sig;
+      if (genChanged || force) fillTargets();
+      run();
+    }
+
+    box.addEventListener('change', (e) => {
+      const k = e.target.dataset.k;
+      if (k === 'gen') { st.gen = +e.target.value; NX.store.set('gcalc:gen', st.gen); st.sig = ''; refresh(true); return; }
+      if (k === 'target') { st.target = e.target.value; NX.store.set('gcalc:target', st.target); }
+      if (k === 'batch') { st.batch = e.target.value === '1'; NX.store.set('gcalc:batch', st.batch); }
+      if (k === 'pulls') st.pulls = Math.round(NX.clamp(+e.target.value || 1, 1, MAX_PULLS));
+      run();
+    });
+    box.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-p]');
+      if (!b) return;
+      e.preventDefault();
+      st.pulls = b.dataset.p === 't' ? Math.max(1, Math.min(MAX_PULLS, ticketPulls().pulls || 1)) : +b.dataset.p;
+      run();
+    });
+    return { refresh };
+  }
+
+  // Banner abierto en la pantalla del gacha, por el título.
+  function openGen() {
+    const t = ($('banner-title') && $('banner-title').textContent.trim()) || '';
+    if (!t) return null;
+    const list = banners();
+    const b = list.find((x) => t === T(x.name)) || list.find((x) => t.includes(T(x.name)) || t.includes(x.name));
+    return b ? b.gen : null;
+  }
+
+  function buildScreen() {
+    const pity = $('gacha-pity');
+    if (!pity || $('nx-gcalc')) return;
+    const d = document.createElement('details');
+    d.id = 'nx-gcalc';
+    d.className = 'note nx-gcalc';
+    d.open = NX.store.get('gcalc:open', false);
+    d.innerHTML = '<summary>Calculadora de probabilidades</summary><div></div>';
+    const anchor = $('nx-regions') || pity;
+    anchor.after(d);
+    const calc = mount(d.lastChild, openGen);
+    d.addEventListener('toggle', () => { NX.store.set('gcalc:open', d.open); if (d.open) calc.refresh(true); });
+    setInterval(() => {
+      const on = NX.isOn(KEY);
+      d.classList.toggle('nx-off', !on);
+      if (!on || !NX.shown('scr-gacha')) return;
+      // Que quede justo debajo de los faltantes por región si aparecen después.
+      const reg = $('nx-regions');
+      if (reg && d.previousElementSibling !== reg) reg.after(d);
+      if (d.open) { try { calc.refresh(false); } catch (err) { NX.trip(KEY, err); } }
+    }, 700);
+  }
+
+  NX.gachaCalc = { compute, model, ticketPulls };
+
+  NX.feature({
+    key: KEY,
+    label: 'Calculadora de gacha',
+    needs: (n) => n.Gacha && typeof n.Gacha.pool === 'function' && Array.isArray(n.Gacha.RATES) && Array.isArray(n.Gacha.BANNERS) &&
+      n.DB && n.Sprites && typeof n.Sprites.hasShiny === 'function' && !!$('gacha-pity'),
+    setup() {
+      NX.css('.nx-off{display:none!important}');
+      buildScreen();
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Menús',
+    title: 'Calculadora de gacha',
+    keywords: 'gacha probabilidad tiradas piedad legendaria calculadora tickets faltan esperado',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado (también dentro del Gacha)', 'on:' + KEY, true));
+      if (!NX.isOn(KEY)) return;
+      if (!save()) { el.appendChild(NX.ui.note('Entra al juego para usar la calculadora.')); return; }
+      const box = document.createElement('div');
+      box.className = 'nx-gcalc';
+      el.appendChild(box);
+      try { mount(box, null).refresh(true); } catch (err) { el.appendChild(NX.ui.note('No se pudo mostrar: ' + err.message)); }
+    },
+  });
+})();
+
 // ---- features/gacha.js
 // Gacha rápido: usar todos los tickets de una vez, saltar la animación de la
 // tragamonedas y ver qué falta en cada región.
@@ -7945,6 +8494,200 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   });
 })();
 
+// ---- features/hud-themes.js
+// Temas del HUD: variantes de color y de grosor de bordes para el HUD Nexus
+// (hud-new.js) y para el panel y las ventanas de Nexus, coordinadas con las
+// paletas de "Identidad Nexus Edition" (theme.js).
+//
+// hud-new.js dibuja en canvas con colores fijos dentro de su closure (INK
+// #0b1838, EDGE #e8eef8, GOLD #ffd23f y una docena de fondos rgba) y no los
+// expone. Sin editarlo, aquí se envuelve su capa "over" en NX.hudLayers y,
+// solo mientras dibuja, se traducen esos colores exactos al asignarse a
+// fillStyle y strokeStyle (y se escala lineWidth para el grosor de bordes).
+// Fuera de esa llamada el contexto se comporta igual que siempre. Lo que
+// faltaría en hud-new.js para hacerlo sin interceptar: un objeto público
+// (por ejemplo NX.hudNewPalette = { ink, edge, gold, panel, slot }) leído en
+// cada cuadro en lugar de las constantes, y un factor de grosor de borde.
+// El panel y las ventanas usan variables CSS propias (--nx-h-*).
+(() => {
+  const KEY = 'hudth';
+  const opt = (k, d) => NX.store.get('hudth:' + k, d);
+
+  // Paletas: box1/box2 fondo, edge borde claro, edgeIn borde interior,
+  // edgeOut contorno oscuro, accent acento (sustituye al dorado del HUD).
+  const PALETTES = {
+    nexus: { name: 'Nexus (violeta y cian)', box1: '#3a3396', box2: '#1c1758', edge: '#f2f0ff', edgeIn: '#7d70f2', edgeOut: '#0c0a2e', accent: '#5fe0ff' },
+    esmeralda: { name: 'Esmeralda', box1: '#1f6b5a', box2: '#0f3b33', edge: '#effff9', edgeIn: '#46b894', edgeOut: '#06201b', accent: '#7dffcf' },
+    carmesi: { name: 'Carmesí', box1: '#8a2a3e', box2: '#4a1222', edge: '#fff2f4', edgeIn: '#d05a72', edgeOut: '#250610', accent: '#ffb3c1' },
+    noche: { name: 'Noche (gris azulado)', box1: '#2f3a4f', box2: '#161c2a', edge: '#eef3fb', edgeIn: '#6a7d9e', edgeOut: '#070a12', accent: '#9fd0ff' },
+    oro: { name: 'Oro', box1: '#6a4a12', box2: '#3a2808', edge: '#fff4d6', edgeIn: '#c9962e', edgeOut: '#1d1405', accent: '#ffd23f' },
+    contraste: { name: 'Alto contraste', box1: '#1a1a1a', box2: '#000000', edge: '#ffffff', edgeIn: '#bdbdbd', edgeOut: '#000000', accent: '#ffee00' },
+  };
+  const VARS = { box1: '--box1', box2: '--box2', edge: '--edge', edgeIn: '--edge-in', edgeOut: '--edge-out', accent: '--nx-accent' };
+
+  const hex = (h) => {
+    h = String(h || '').trim();
+    const m = /^#?([0-9a-f]{6})$/i.exec(h) || /^#?([0-9a-f]{3})$/i.exec(h);
+    if (!m) return null;
+    let s = m[1];
+    if (s.length === 3) s = s.split('').map((c) => c + c).join('');
+    return [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)];
+  };
+  const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+  // Paleta elegida, o la de theme.js si se pide coordinar con los menús.
+  function palette() {
+    const v = opt('style', 'original');
+    if (v === 'original') return null;
+    if (v === 'menus') {
+      const root = document.documentElement;
+      if (!root || !root.classList.contains('nx-th')) return null;
+      const cs = getComputedStyle(root), p = {};
+      for (const [k, css] of Object.entries(VARS)) p[k] = cs.getPropertyValue(css).trim();
+      return hex(p.box2) && hex(p.edge) ? p : null;
+    }
+    return PALETTES[v] || null;
+  }
+
+  // Colores exactos de hud-new.js -> colores del tema.
+  let colorMap = null, mapSig = '';
+  function buildMap(p) {
+    const b2 = hex(p.box2), b1 = hex(p.box1) || b2, ink = hex(p.edgeOut) || [11, 24, 56], edge = hex(p.edge) || [232, 238, 248];
+    const inner = hex(p.edgeIn) || edge, acc = p.accent || '#ffd23f';
+    const dark = mix(b2, [0, 0, 0], 0.35), mid = mix(b2, b1, 0.35);
+    const m = new Map();
+    m.set('#0b1838', p.edgeOut);
+    m.set('#e8eef8', p.edge);
+    m.set('#ffd23f', acc);
+    for (const [s, a] of [['rgba(12,20,40,.92)', 0.92], ['rgba(20,24,44,.92)', 0.92], ['rgba(10,14,28,.94)', 0.94], ['rgba(10,16,32,.5)', 0.5],
+      ['rgba(10,16,28,.45)', 0.45], ['rgba(11,24,56,.9)', 0.9], ['rgba(11,24,56,.55)', 0.55]]) m.set(s, rgba(dark, a));
+    for (const [s, a] of [['rgba(22,36,74,.97)', 0.97], ['rgba(18,34,74,.95)', 0.95], ['rgba(20,40,90,.95)', 0.95]]) m.set(s, rgba(mid, a));
+    m.set('rgba(140,170,210,.25)', rgba(inner, 0.25));
+    m.set('rgba(232,238,248,.25)', rgba(edge, 0.25));
+    m.set('rgba(232,238,248,.22)', rgba(edge, 0.22));
+    m.set('rgba(200,215,240,.8)', rgba(mix(edge, inner, 0.3), 0.8));
+    m.set('rgba(200,215,240,.85)', rgba(mix(edge, inner, 0.3), 0.85));
+    return m;
+  }
+  let border = 1;
+  function refresh() {
+    const p = NX.isOn(KEY) ? palette() : null;
+    border = NX.isOn(KEY) ? NX.clamp(+opt('border', 1) || 1, 0.5, 2) : 1;
+    const sig = p ? JSON.stringify(p) : '';
+    if (sig !== mapSig) { mapSig = sig; colorMap = p ? buildMap(p) : null; }
+    applyCss(p);
+  }
+
+  // ---- canvas: traducción de colores solo durante el dibujo de hud-new.js
+  let cur = null, curBorder = 1;
+  const patched = new WeakSet();
+  function patchCtx(ctx) {
+    if (patched.has(ctx)) return;
+    patched.add(ctx);
+    const P = Object.getPrototypeOf(ctx);
+    const desc = (k) => { let o = P; while (o && !Object.getOwnPropertyDescriptor(o, k)) o = Object.getPrototypeOf(o); return o && Object.getOwnPropertyDescriptor(o, k); };
+    const fd = desc('fillStyle'), sd = desc('strokeStyle'), ld = desc('lineWidth');
+    if (!fd || !sd || !ld) return;
+    Object.defineProperty(ctx, 'fillStyle', {
+      configurable: true,
+      get() { return fd.get.call(this); },
+      set(v) { fd.set.call(this, cur && typeof v === 'string' ? (cur.get(v) || v) : v); },
+    });
+    Object.defineProperty(ctx, 'strokeStyle', {
+      configurable: true,
+      get() { return sd.get.call(this); },
+      set(v) { sd.set.call(this, cur && typeof v === 'string' ? (cur.get(v) || v) : v); },
+    });
+    Object.defineProperty(ctx, 'lineWidth', {
+      configurable: true,
+      get() { return ld.get.call(this); },
+      set(v) { ld.set.call(this, curBorder !== 1 && typeof v === 'number' ? v * curBorder : v); },
+    });
+  }
+  function wrapLayer() {
+    const L = NX.hudLayers.find((l) => l && l.key === 'hudnew');
+    if (!L) return false;
+    if (L.__nxHudth) return true;
+    const orig = L.over;
+    if (typeof orig !== 'function') return false;
+    L.over = function (ctx) {
+      if (!colorMap && border === 1) return orig.apply(this, arguments);
+      try { patchCtx(ctx); } catch (_) { return orig.apply(this, arguments); }
+      cur = colorMap; curBorder = border;
+      try { return orig.apply(this, arguments); } finally { cur = null; curBorder = 1; }
+    };
+    L.__nxHudth = true;
+    return true;
+  }
+
+  // ---- panel y ventanas de Nexus
+  NX.css(`html.nx-hudth #nexus-panel .nx-box,html.nx-hudth #nexus-rb,html.nx-hudth #nexus-map,html.nx-hudth #nexus-mmenu,html.nx-hudth #nexus-meter{
+  background:linear-gradient(var(--nx-h-box1),var(--nx-h-box2))!important;border-color:var(--nx-h-edge)!important;outline-color:var(--nx-h-out)!important;
+  box-shadow:inset 0 0 0 2px var(--nx-h-in),0 5px 0 var(--nx-h-out)!important;border-width:var(--nx-h-bw,2px)!important}
+html.nx-hudth #nexus-panel h3,html.nx-hudth #nexus-rb .rb-h b,html.nx-hudth #nexus-mmenu .nx-mmh{color:var(--nx-h-acc)!important}
+html.nx-hudth #nexus-panel select,html.nx-hudth #nexus-panel .nx-search,html.nx-hudth #nexus-panel .nx-btn,html.nx-hudth #nexus-panel .nx-close,
+html.nx-hudth #nexus-panel .nx-tabs button:not(.on),html.nx-hudth #nexus-mmenu button,html.nx-hudth #nexus-rb .rb-c{background:var(--nx-h-out)!important;border-color:var(--nx-h-in)!important}
+html.nx-hudth #nexus-panel .nx-tabs button.on{background:var(--nx-h-acc)!important;border-color:var(--nx-h-acc)!important;color:var(--nx-h-out)!important}
+html.nx-hudth #nexus-panel .nx-rng b{color:var(--nx-h-acc)!important}
+html.nx-hudth #nexus-panel input[type=checkbox]{accent-color:var(--nx-h-acc)}
+#nexus-panel .nx-hth-sw{display:flex;gap:4px;margin:2px 0 6px}#nexus-panel .nx-hth-sw i{width:22px;height:14px;border-radius:3px;border:1px solid #fff}`);
+
+  function applyCss(p) {
+    const root = document.documentElement;
+    if (!root) return;
+    const want = !!p && opt('panel', true) !== false && opt('style', 'original') !== 'menus';
+    root.classList.toggle('nx-hudth', want);
+    if (!want) return;
+    const s = root.style;
+    s.setProperty('--nx-h-box1', p.box1);
+    s.setProperty('--nx-h-box2', p.box2);
+    s.setProperty('--nx-h-edge', p.edge);
+    s.setProperty('--nx-h-in', p.edgeIn);
+    s.setProperty('--nx-h-out', p.edgeOut);
+    s.setProperty('--nx-h-acc', p.accent);
+    s.setProperty('--nx-h-bw', Math.max(1, Math.round(2 * border)) + 'px');
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Temas del HUD',
+    needs: () => !!document.documentElement,
+    setup() {
+      refresh();
+      NX.onReady(refresh);
+      // hud-new.js registra su capa al arrancar; se envuelve cuando aparezca.
+      const t = setInterval(() => { if (wrapLayer()) clearInterval(t); }, 300);
+      setTimeout(() => clearInterval(t), 90000);
+      setInterval(() => { try { refresh(); } catch (err) { NX.trip(KEY, err); } }, 1000);
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Estilo',
+    title: 'Temas del HUD',
+    keywords: 'tema hud colores bordes paleta panel ventanas contraste oro esmeralda carmesí noche',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true, refresh));
+      el.appendChild(NX.ui.select('Tema', 'hudth:style', [
+        ['original', 'Original (sin cambios)'], ['menus', 'Igual que el estilo de menús'],
+        ...Object.entries(PALETTES).map(([id, p]) => [id, p.name]),
+      ], 'original', () => { refresh(); if (NX.togglePanel) { NX.togglePanel(); NX.togglePanel(); } }));
+      const p = palette();
+      if (p) {
+        const sw = document.createElement('div');
+        sw.className = 'nx-hth-sw';
+        sw.innerHTML = [p.box1, p.box2, p.edgeIn, p.accent, p.edge].map((c) => `<i style="background:${NX.esc(c)}"></i>`).join('');
+        el.appendChild(sw);
+      }
+      el.appendChild(NX.ui.select('Grosor de bordes del HUD', 'hudth:border', [['0.6', 'Fino'], ['1', 'Normal'], ['1.5', 'Grueso']], '1', refresh));
+      el.appendChild(NX.ui.toggle('Aplicar también al panel y las ventanas de Nexus', 'hudth:panel', true, refresh));
+      el.appendChild(NX.ui.note('Cambia los colores del HUD Nexus (cajas, bordes y acentos; la vida y la experiencia siguen "Colores del HUD"). "Igual que el estilo de menús" toma la paleta de Identidad Nexus Edition; con el estilo original del juego no cambia nada.'));
+    },
+  });
+})();
+
 // ---- features/limitbreak.js
 // Límite superado: cuando ya no queda nada que mejorar en la subida de nivel
 // (los 4 movimientos sin más niveles ni evoluciones pendientes, sin huecos
@@ -8034,6 +8777,1099 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
     render(el) {
       el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
       el.appendChild(NX.ui.note('Cuando ya no queda nada por mejorar en la subida de nivel, ofrece mejoras pequeñas e infinitas (+2 % de daño, +1 % de velocidad, +5 de vida y más) en vez de repetir Vigor, Síntesis y Baya Zidra.'));
+    },
+  });
+})();
+
+// ---- features/map-interact.js
+// Interacción con el mapa:
+// - Botín extra al romper objetos. World.damageProp devuelve true cuando el
+//   objeto se rompe; el juego ya suelta cosas en ese momento (hierba: curación
+//   5 % o moneda 6 %; roca: experiencia 40 %, monedas 25 %, curación 6 %;
+//   calabaza y cofre siempre). Solo si el juego no soltó nada se tira un dado
+//   propio: experiencia, una moneda, una ficha de la tienda (si la tienda de
+//   Nexus está en la partida), una baya pequeña que cura un poco o, rara vez,
+//   un objeto de NX.mapPickups. Los cofres y trampas (World.breakProp) quedan
+//   como están.
+// - Hierba y árboles que se mecen al pasar: envuelve World.drawProp, que el
+//   juego llama ordenado por profundidad, y aplica un sesgo anclado en la base
+//   con una oscilación amortiguada. Sin asignaciones por cuadro.
+// - Puentes: el terreno sale de una función de closure (0 suelo, 1 muro, 2
+//   líquido) y el líquido no bloquea, solo frena (agua, pantano), hace
+//   resbalar (hielo) o quema (lava, veneno, chispas). Donde una franja de
+//   líquido de 1 a 4 tiles corta el paso entre dos tiles de suelo se tiende un
+//   puente de tablones (o de piedra sobre líquidos dañinos, opcional). Se
+//   dibuja justo después del líquido (World.drawLiquid, debajo de objetos y
+//   Pokémon) y World.isLiquid devuelve false sobre sus tiles, así que el
+//   jugador cruza sin frenarse ni quemarse. Se calcula por trozos de 16×16
+//   tiles alrededor del jugador y vale para todos los biomas, arenas, islas y
+//   mazmorra; se recalcula al cambiar la semilla o la arena.
+(() => {
+  const KEY = 'mapint';
+  const TS = 32, CH = 16;
+  const BERRY_LIFE = 30, BERRY_MAX = 10;
+  const CHANCE = { grass: 0.08, rock: 0.3, pumpkin: 0.2, chest: 0, bigchest: 0, trap: 0 };
+  const SPACING = { 1: 12, 2: 8, 3: 5 };
+  const HARM_LIQ = { lava: 1, poison: 1, spark: 1 };
+
+  let ns = null, W = null;
+  const opt = (k, d) => NX.store.get('mapint:' + k, d);
+  const on = () => NX.isOn(KEY);
+  const coop = () => !!(ns && ns.Coop && ns.Coop.active);
+  const now = () => (ns && ns.Game && ns.Game.st && ns.Game.st.time) || 0;
+  const fx = (fn, ...a) => { try { const f = ns.FX && ns.FX[fn]; if (f) f.apply(ns.FX, a); } catch (_) { /* nada */ } };
+  const sfx = (n) => { try { ns.Audio.sfx(n); } catch (_) { /* silencio */ } };
+
+  // Estado cacheado cada 100 ms para no consultar ajustes en cada cuadro.
+  let swayOn = false, bridgesOn = false, curMe = null;
+
+  // ------------------------------------------------------------------ botín
+  let gameDrops = 0;
+  const berries = [];
+  const stats = { breaks: 0, gameDropped: 0, bonus: {} };
+
+  function bonus(prop) {
+    if (!NX.inRun() || coop() || opt('drops', true) === false) return;
+    const base = CHANCE[prop.type] != null ? CHANCE[prop.type] : 0.18;
+    const ch = base * NX.clamp(+opt('dropmul', 1) || 0, 0, 3);
+    if (!ch || Math.random() >= ch) return;
+    const shop = NX.shop && typeof NX.shop.give === 'function' && NX.isOn('shop') && NX.shop.chips;
+    const rare = NX.mapPickups && typeof NX.mapPickups.spawn === 'function' && NX.isOn('pickups') && NX.mapPickups.list().length < 3;
+    let tot = 40 + 24 + 16 + (shop ? 12 : 0) + (rare ? 3 : 0);
+    let r = Math.random() * tot, kind;
+    if ((r -= 40) < 0) kind = 'xp';
+    else if ((r -= 24) < 0) kind = 'coin';
+    else if ((r -= 16) < 0) kind = 'berry';
+    else if (shop && (r -= 12) < 0) kind = 'chip';
+    else kind = rare ? 'rare' : 'xp';
+    const x = prop.x, y = prop.y;
+    if (kind === 'xp') ns.Pickups.dropXp(x, y, Math.max(3, Math.round(4 + now() / 120)));
+    else if (kind === 'coin') ns.Pickups.drop('coin', x, y, 1);
+    else if (kind === 'chip') { NX.shop.give(1); fx('dmgText', x, y - 16, '+1 ficha', '#ffd23f'); }
+    else if (kind === 'berry') {
+      if (berries.length >= BERRY_MAX) berries.shift();
+      berries.push({ x, y: y - 2, t0: now(), ph: Math.random() * 6 });
+    } else if (kind === 'rare') {
+      const it = NX.mapPickups.spawn(null, true);
+      if (it) fx('dmgText', x, y - 16, '¡Objeto!', '#7fe0ff'); else ns.Pickups.drop('coin', x, y, 1);
+    }
+    stats.bonus[kind] = (stats.bonus[kind] || 0) + 1;
+  }
+
+  function tickBerries(p) {
+    if (!berries.length) return;
+    const t = now();
+    for (let i = berries.length - 1; i >= 0; i--) {
+      const b = berries[i];
+      if (t - b.t0 > BERRY_LIFE || t < b.t0) { berries.splice(i, 1); continue; }
+      if (!p || p.dead) continue;
+      const reach = (p.r || 14) + 14;
+      if ((p.x - b.x) ** 2 + (p.y - b.y) ** 2 > reach * reach) continue;
+      berries.splice(i, 1);
+      const pct = NX.clamp(+opt('berry', 8) || 8, 2, 20) / 100;
+      const before = p.hp;
+      try { p.heal(p.maxHp * pct); } catch (_) { /* nada */ }
+      const got = Math.round((p.hp || 0) - (before || 0));
+      fx('ring', b.x, b.y, 4, 34, '#5fe08a', 0.35, 2);
+      if (got > 0) fx('dmgText', b.x, b.y - 14, '+' + got, '#5fe08a');
+      sfx('select');
+    }
+  }
+
+  const BERRY_ART = ['..gg..', '.gG...', 'rrrrr.', 'rRrrrr', 'rrrrrr', '.rrrr.'];
+  const BERRY_PAL = { g: '#2f8f3a', G: '#5fe08a', r: '#c8324e', R: '#ff9aa8' };
+  function drawBerries(g, w, h) {
+    if (!berries.length || !NX.inRun()) return;
+    const S = ns.Camera.scale || 1, u = Math.max(2, Math.round(1.6 * S)), t = now(), ms = performance.now();
+    for (const b of berries) {
+      if (BERRY_LIFE - (t - b.t0) < 6 && Math.sin(ms / 90) > 0.4) continue;
+      const [sx, sy] = NX.toScreen(b.x, b.y);
+      if (sx < -20 || sy < -20 || sx > w + 20 || sy > h + 20) continue;
+      const bob = Math.sin(ms / 260 + b.ph) * 2 * S;
+      g.fillStyle = 'rgba(0,0,0,.25)';
+      g.beginPath(); g.ellipse(sx, sy + 3 * S, 6 * S, 2.2 * S, 0, 0, Math.PI * 2); g.fill();
+      const x0 = Math.round(sx - 3 * u), y0 = Math.round(sy - 9 * S - 3 * u + bob);
+      g.fillStyle = '#0b1838';
+      for (let j = 0; j < 6; j++) for (let i = 0; i < 6; i++) if (BERRY_ART[j][i] !== '.') g.fillRect(x0 + i * u - 1, y0 + j * u - 1, u + 2, u + 2);
+      for (let j = 0; j < 6; j++) for (let i = 0; i < 6; i++) { const c = BERRY_ART[j][i]; if (c !== '.') { g.fillStyle = BERRY_PAL[c]; g.fillRect(x0 + i * u, y0 + j * u, u, u); } }
+    }
+  }
+
+  // ----------------------------------------------------------------- mecerse
+  function swayDraw(od, self, args) {
+    const ctx = args[0], prop = args[1], t = args[2];
+    const grass = prop.type === 'grass';
+    const p = curMe;
+    if (p && p.walking) {
+      const dx = prop.x - p.x, dy = prop.y - p.y, R = prop.r + (p.r || 14) + (grass ? 2 : 5);
+      if (dx * dx + dy * dy < R * R && (!prop._nxsa || t - prop._nxst > 0.35 || t < prop._nxst)) {
+        prop._nxst = t;
+        prop._nxsa = grass ? 1 : 0.28;
+        const vx = p.svx || 0;
+        prop._nxsd = (Math.abs(vx) > 5 ? vx : dx) >= 0 ? 1 : -1;
+      }
+    }
+    const a = prop._nxsa;
+    if (!a) return od.apply(self, args);
+    const e = t - prop._nxst;
+    const amp = a * Math.exp(-e * 3.2);
+    if (amp < 0.02 || e < 0) { prop._nxsa = 0; return od.apply(self, args); }
+    const k = prop._nxsd * amp * 0.42 * Math.cos(e * 13);
+    ctx.save();
+    ctx.translate(prop.x, prop.y);
+    ctx.transform(1, 0, -k, 1, 0, 0);
+    ctx.translate(-prop.x, -prop.y);
+    try { return od.apply(self, args); } finally { ctx.restore(); }
+  }
+
+  // ----------------------------------------------------------------- puentes
+  const bridges = [];          // { h, tx, ty, len, stone }
+  const bset = new Set();      // tiles de puente (clave numérica)
+  const scanned = new Set();   // trozos ya revisados ('cx,cy')
+  const tkey = (tx, ty) => tx * 2097152 + ty;
+  let harmful = false;
+
+  function clearBridges() { bridges.length = 0; bset.clear(); scanned.clear(); }
+
+  const kindT = (tx, ty) => W.kindAt(tx * TS + 16, ty * TS + 16);
+  const hash = (a, b, c) => {
+    let h = (a * 374761393 + b * 668265263 + c * 2147483647) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  function walkT(tx, ty) {
+    if (kindT(tx, ty) !== 'floor') return false;
+    try { return typeof W.walkable !== 'function' || W.walkable(tx, ty); } catch (_) { return true; }
+  }
+
+  function tryBridge(h, tx, ty, maxLen, spacing) {
+    const sx = h ? 1 : 0, sy = h ? 0 : 1;
+    if (!walkT(tx - sx, ty - sy)) return;
+    let L = 0;
+    while (L <= maxLen && kindT(tx + sx * L, ty + sy * L) === 'liquid') L++;
+    if (L < 1 || L > maxLen || !walkT(tx + sx * L, ty + sy * L)) return;
+    // Que corte un canal o charco de verdad: el líquido sigue a ambos lados.
+    const mx = tx + sx * (L >> 1), my = ty + sy * (L >> 1);
+    let sa = 0, sb = 0;
+    for (let i = 1; i <= 2; i++) {
+      if (kindT(mx + sy * i, my + sx * i) === 'liquid') sa++;
+      if (kindT(mx - sy * i, my - sx * i) === 'liquid') sb++;
+    }
+    if (!sa || !sb || sa + sb < 3) return;
+    if (hash(tx, ty, h ? 1 : 2) > 0.6) return;
+    const cx = tx + sx * L / 2, cy = ty + sy * L / 2;
+    for (const b of bridges) {
+      const bx = b.tx + (b.h ? b.len / 2 : 0), by = b.ty + (b.h ? 0 : b.len / 2);
+      if (Math.max(Math.abs(bx - cx), Math.abs(by - cy)) < spacing) return;
+    }
+    bridges.push({ h, tx, ty, len: L });
+    for (let i = 0; i < L; i++) bset.add(tkey(tx + sx * i, ty + sy * i));
+  }
+
+  function scanChunk(cx, cy) {
+    const maxLen = NX.clamp(+opt('blen', 4) || 4, 1, 6);
+    const spacing = SPACING[opt('bfreq', 2)] || 8;
+    for (let ty = cy * CH; ty < cy * CH + CH; ty++) {
+      for (let tx = cx * CH; tx < cx * CH + CH; tx++) {
+        if (kindT(tx, ty) !== 'liquid') continue;
+        if (kindT(tx - 1, ty) === 'floor') tryBridge(true, tx, ty, maxLen, spacing);
+        if (kindT(tx, ty - 1) === 'floor') tryBridge(false, tx, ty, maxLen, spacing);
+      }
+    }
+  }
+
+  function tickBridges(p) {
+    if (!p) return;
+    const ccx = Math.floor(p.x / (TS * CH)), ccy = Math.floor(p.y / (TS * CH));
+    let budget = 2;
+    for (let dy = -1; dy <= 1 && budget; dy++) {
+      for (let dx = -1; dx <= 1 && budget; dx++) {
+        const k = (ccx + dx) + ',' + (ccy + dy);
+        if (scanned.has(k)) continue;
+        scanned.add(k);
+        scanChunk(ccx + dx, ccy + dy);
+        budget--;
+      }
+    }
+  }
+
+  function liquidHarm() {
+    try {
+      const eff = W.liquidEffect([]) || {};
+      const kind = typeof W.liquidKind === 'function' ? W.liquidKind() : '';
+      return !!(eff.dmg || eff.flat || HARM_LIQ[kind]);
+    } catch (_) { return false; }
+  }
+
+  // Tablones (o piedra) en coordenadas del mundo, después del líquido.
+  const WOOD = { base: '#4a2e16', a: '#9a6a3a', b: '#b47e48', hi: '#e0b070', rail: '#3a2210' };
+  const STONE = { base: '#3a3a46', a: '#7c7c8a', b: '#93939f', hi: '#c8c8d2', rail: '#2a2a34' };
+  function drawBridges(ctx, cam) {
+    if (!bridgesOn || !bridges.length) return;
+    const L = cam.left(), T = cam.top(), R = L + cam.w, B = T + cam.h;
+    const C = harmful ? STONE : WOOD;
+    for (const br of bridges) {
+      const len = br.len * TS;
+      const x0 = br.h ? br.tx * TS - 6 : br.tx * TS + 4;
+      const y0 = br.h ? br.ty * TS + 4 : br.ty * TS - 6;
+      const w = br.h ? len + 12 : 24, hh = br.h ? 24 : len + 12;
+      if (x0 > R + 8 || y0 > B + 8 || x0 + w < L - 8 || y0 + hh < T - 8) continue;
+      ctx.fillStyle = 'rgba(0,0,0,.28)';
+      ctx.fillRect(x0 + 2, y0 + 4, w, hh);
+      ctx.fillStyle = C.base;
+      ctx.fillRect(x0, y0, w, hh);
+      if (br.h) {
+        for (let x = x0 + 1, i = 0; x < x0 + w - 1; x += 8, i++) {
+          ctx.fillStyle = i & 1 ? C.a : C.b;
+          ctx.fillRect(x, y0 + 3, Math.min(6, x0 + w - 1 - x), hh - 6);
+          ctx.fillStyle = C.hi;
+          ctx.fillRect(x, y0 + 3, Math.min(6, x0 + w - 1 - x), 2);
+        }
+        ctx.fillStyle = C.rail;
+        ctx.fillRect(x0, y0, w, 3); ctx.fillRect(x0, y0 + hh - 3, w, 3);
+        ctx.fillRect(x0 - 2, y0 - 4, 6, 8); ctx.fillRect(x0 + w - 4, y0 - 4, 6, 8);
+        ctx.fillRect(x0 - 2, y0 + hh - 4, 6, 8); ctx.fillRect(x0 + w - 4, y0 + hh - 4, 6, 8);
+      } else {
+        for (let y = y0 + 1, i = 0; y < y0 + hh - 1; y += 8, i++) {
+          ctx.fillStyle = i & 1 ? C.a : C.b;
+          ctx.fillRect(x0 + 3, y, w - 6, Math.min(6, y0 + hh - 1 - y));
+          ctx.fillStyle = C.hi;
+          ctx.fillRect(x0 + 3, y, w - 6, 2);
+        }
+        ctx.fillStyle = C.rail;
+        ctx.fillRect(x0, y0, 3, hh); ctx.fillRect(x0 + w - 3, y0, 3, hh);
+        ctx.fillRect(x0 - 4, y0 - 2, 8, 6); ctx.fillRect(x0 + w - 4, y0 - 2, 8, 6);
+        ctx.fillRect(x0 - 4, y0 + hh - 4, 8, 6); ctx.fillRect(x0 + w - 4, y0 + hh - 4, 8, 6);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------- reloj
+  let tickN = 0;
+  function tick() {
+    tickN++;
+    const live = !!ns && on() && NX.inRun() && !coop();
+    const p = live ? NX.me() : null;
+    curMe = p;
+    swayOn = live && opt('sway', true) !== false;
+    if (!live) {
+      bridgesOn = false;
+      if (berries.length) berries.length = 0;
+      return;
+    }
+    harmful = liquidHarm();
+    bridgesOn = opt('bridges', true) !== false && (!harmful || opt('bharm', false) === true);
+    if (opt('bridges', true) !== false && tickN % 3 === 0) tickBridges(p);
+    tickBerries(p);
+  }
+
+  NX.hudLayers.push({ key: KEY, under: drawBerries });
+
+  NX.mapInteract = {
+    stats: () => JSON.parse(JSON.stringify(stats)),
+    bridges: () => bridges.map((b) => ({ ...b })),
+    bridgesActive: () => bridgesOn,
+    berries: () => berries.map((b) => ({ ...b })),
+    rescan: clearBridges,
+  };
+
+  NX.feature({
+    key: KEY,
+    label: 'Interacción con el mapa',
+    needs: (n) => n.World && typeof n.World.damageProp === 'function' && typeof n.World.drawProp === 'function' &&
+      typeof n.World.drawLiquid === 'function' && typeof n.World.isLiquid === 'function' && typeof n.World.kindAt === 'function' &&
+      n.Pickups && typeof n.Pickups.drop === 'function' && typeof n.Pickups.dropXp === 'function' && n.Camera && n.Game && n.Game.st,
+    setup(n) {
+      ns = n; W = n.World;
+      const PK = n.Pickups;
+      const oDrop = PK.drop, oXp = PK.dropXp;
+      PK.drop = function () { gameDrops++; return oDrop.apply(this, arguments); };
+      PK.dropXp = function () { gameDrops++; return oXp.apply(this, arguments); };
+
+      const oDmg = W.damageProp;
+      W.damageProp = function (prop) {
+        if (!on() || !prop || prop._nxbr) return oDmg.apply(this, arguments);
+        const before = gameDrops;
+        const res = oDmg.apply(this, arguments);
+        if (res === true) {
+          prop._nxbr = 1;
+          stats.breaks++;
+          if (gameDrops !== before) stats.gameDropped++;
+          else { try { bonus(prop); } catch (err) { NX.trip(KEY, err); } }
+        }
+        return res;
+      };
+
+      const oProp = W.drawProp;
+      W.drawProp = function (ctx, prop) {
+        if (!swayOn || !prop || prop.flat || (prop.type !== 'grass' && prop.type !== 'tree')) return oProp.apply(this, arguments);
+        try { return swayDraw(oProp, this, arguments); } catch (err) { NX.trip(KEY, err); prop._nxsa = 0; return oProp.apply(this, arguments); }
+      };
+
+      const oLiq = W.drawLiquid;
+      W.drawLiquid = function (ctx, cam) {
+        const r = oLiq.apply(this, arguments);
+        if (bridgesOn) {
+          ctx.save();
+          try { drawBridges(ctx, cam || ns.Camera); } catch (err) { NX.trip(KEY, err); }
+          ctx.restore();
+        }
+        return r;
+      };
+
+      const oIs = W.isLiquid;
+      W.isLiquid = function (x, y) {
+        const r = oIs.apply(this, arguments);
+        if (!r || !bridgesOn || !bset.size) return r;
+        return !bset.has(tkey(Math.floor(x / TS), Math.floor(y / TS)));
+      };
+
+      // Semilla o arena nuevas: el terreno cambia y los puentes se recalculan.
+      const oReset = W.reset;
+      if (typeof oReset === 'function') W.reset = function () { clearBridges(); return oReset.apply(this, arguments); };
+      const oArena = W.setArena;
+      if (typeof oArena === 'function') W.setArena = function () { clearBridges(); return oArena.apply(this, arguments); };
+
+      NX.runs.on('start', () => { berries.length = 0; clearBridges(); });
+      NX.runs.on('end', () => { berries.length = 0; });
+      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 100);
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Cámara y mapa',
+    title: 'Interacción con el mapa',
+    keywords: 'mapa romper objetos botín drops baya fichas monedas hierba mecer arbustos puentes agua lava cruzar',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.toggle('Botín extra al romper objetos', 'mapint:drops', true));
+      el.appendChild(NX.ui.range('Probabilidad del botín extra', 'mapint:dropmul', 0, 3, 0.25, 1, (v) => '×' + v));
+      el.appendChild(NX.ui.range('Curación de la baya pequeña', 'mapint:berry', 2, 20, 1, 8, (v) => v + ' %'));
+      el.appendChild(NX.ui.note('Solo cuando el juego no soltó nada: experiencia, una moneda, una ficha de la tienda, una baya pequeña o, rara vez, un objeto del mapa. Los cofres no cambian.'));
+      el.appendChild(NX.ui.toggle('La hierba y los árboles se mecen al pasar', 'mapint:sway', true));
+      el.appendChild(NX.ui.toggle('Puentes sobre franjas estrechas de líquido', 'mapint:bridges', true));
+      el.appendChild(NX.ui.toggle('Puentes de piedra también sobre lava, veneno y chispas', 'mapint:bharm', false));
+      el.appendChild(NX.ui.range('Largo máximo del puente', 'mapint:blen', 1, 6, 1, 4, (v) => v + (v > 1 ? ' tiles' : ' tile'), clearBridges));
+      el.appendChild(NX.ui.select('Cantidad de puentes', 'mapint:bfreq', [['1', 'Pocos'], ['2', 'Normal'], ['3', 'Muchos']], '2', clearBridges));
+      el.appendChild(NX.ui.note('Sobre un puente no se aplica el efecto del líquido (frenar, resbalar o quemar). Valen en todos los biomas, arenas, islas y mazmorra.'));
+    },
+  });
+})();
+
+// ---- features/map-look-live.js
+// Aspecto del mapa, parte animada (la usa map-look.js desde sus envolturas):
+//  - liquids: brillo que se desplaza sobre el agua, espuma que respira en las
+//    orillas, pulsos y chispas de lava, burbujas de veneno y pantano, arcos de
+//    la electricidad y destellos del hielo. Lee las listas de líquidos que
+//    map-look.js guarda por trozo al pintarlo; si falta alguna, la calcula con
+//    World.kindAt con un presupuesto de un trozo por cuadro.
+//  - prop: vaivén de hierba alta y copas (inclinación desde la base del prop)
+//    y sombra de contacto más definida, desplazada según la luz.
+//  - light: capa de penumbra de baja resolución con huecos de luz alrededor
+//    del jugador y de las fuentes (lava, electricidad, veneno, cristales,
+//    calabazas), brillos aditivos, ciclo sutil de día y tarde opcional y
+//    luciérnagas o motas en Alto. No se activa con la noche del menú de
+//    Halloween (World.drawNight), que solo se dibuja fuera de partida.
+(() => {
+  const L = NX.mapLook || (NX.mapLook = {});
+  const TAU = Math.PI * 2;
+  const lights = [];       // x, y, color (mundo), por cuadro
+  let lightN = 0;
+  const MAX_LIGHTS = [0, 0, 24, 60];
+
+  L.resetFrame = () => { lightN = 0; };
+  const addLight = (x, y, col, r) => {
+    const i = lightN * 4;
+    lights[i] = x; lights[i + 1] = y; lights[i + 2] = col; lights[i + 3] = r;
+    lightN++;
+  };
+
+  // Lista de líquidos del trozo; si map-look.js no la tiene, se calcula aquí.
+  let budget = 0;
+  function chunkLiq(W, cx, cy) {
+    const k = cx + ',' + cy;
+    let a = L.liq.get(k);
+    if (a || budget <= 0) return a || null;
+    budget--;
+    const TS = W.TS || 32, N = 16, out = [];
+    const isL = (X, Y) => W.kindAt(X * TS + TS / 2, Y * TS + TS / 2) === 'liquid';
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const X = cx * N + i, Y = cy * N + j;
+        if (!isL(X, Y)) continue;
+        const m = (isL(X, Y - 1) ? 0 : 1) | (isL(X + 1, Y) ? 0 : 2) | (isL(X, Y + 1) ? 0 : 4) | (isL(X - 1, Y) ? 0 : 8);
+        out.push(X, Y, m);
+      }
+    }
+    a = Int32Array.from(out);
+    L.liq.set(k, a);
+    return a;
+  }
+
+  const GLOW = { lava: 1, spark: 1, poison: 0.55 };
+
+  // ---------------------------------------------------------------- líquidos
+  L.liquids = (ctx, cam, t, q) => {
+    lightN = 0;
+    budget = 1;
+    const ns = L.ns, W = ns.World;
+    const P = ns.Tiles.BIOMES[W.biome];
+    if (!P) return;
+    const TS = W.TS || 32, CW = W.CW || TS * 16;
+    const kind = P.liquid;
+    const draw = L.opt('liquid');
+    const wantLight = q >= 2 && L.opt('light') && GLOW[kind];
+    if (!draw && !wantLight) return;
+    const x0 = cam.left(), y0 = cam.top(), x1 = x0 + cam.w, y1 = y0 + cam.h;
+    const foam = P.foam || '#ffffff', liqCol = P.liq || '#3f86d8';
+    const hot = kind === 'lava' || kind === 'spark' || kind === 'poison';
+    const maxL = MAX_LIGHTS[q];
+    const hash = L.hash;
+    for (let cy = Math.floor(y0 / CW); cy <= Math.floor(y1 / CW); cy++) {
+      for (let cx = Math.floor(x0 / CW); cx <= Math.floor(x1 / CW); cx++) {
+        const a = chunkLiq(W, cx, cy);
+        if (!a || !a.length) continue;
+        for (let i = 0; i < a.length; i += 3) {
+          const X = a[i], Y = a[i + 1], m = a[i + 2];
+          const px = X * TS, py = Y * TS;
+          if (px + TS < x0 || px > x1 || py + TS < y0 || py > y1) continue;
+          const h = hash(X, Y, 77);
+          if (wantLight && lightN < maxL && !(X & 1) && !(Y & 1)) addLight(px + TS, py + TS, liqCol, GLOW[kind]);
+          if (!draw) continue;
+          // Brillo que viaja en diagonal sobre el cuerpo de líquido.
+          const band = Math.sin(X * 0.9 + Y * 0.45 - t * (hot ? 1.1 : 1.6));
+          if (band > 0.25) {
+            ctx.globalAlpha = (band - 0.25) * (kind === 'ice' ? 0.45 : hot ? 0.45 : 0.8);
+            ctx.fillStyle = foam;
+            const dx = Math.round(Math.sin(t * 0.8 + h * TAU) * 1.5) * 2;
+            ctx.fillRect(px + 4 + Math.floor(h * 6) * 2 + dx, py + 8 + Math.floor(hash(X, Y, 78) * 7) * 2, 12, 2);
+            if (q >= 2 && band > 0.7) ctx.fillRect(px + 4 + Math.floor(hash(X, Y, 79) * 8) * 2 - dx, py + 4 + Math.floor(h * 4) * 2, 6, 2);
+          }
+          if (q < 2) continue;
+          // Espuma de orilla que avanza y retrocede.
+          if (m) {
+            const breath = Math.sin(t * 1.4 + h * TAU);
+            const ins = breath > 0.3 ? 2 : 0;
+            ctx.globalAlpha = 0.28 + 0.22 * (breath + 1) / 2;
+            ctx.fillStyle = foam;
+            const off = Math.floor(h * 4) * 2;
+            if (m & 1) for (let s = off; s < TS; s += 10) ctx.fillRect(px + s, py + ins, 6, 2);
+            if (m & 4) for (let s = off; s < TS; s += 10) ctx.fillRect(px + s, py + TS - 2 - ins, 6, 2);
+            if (m & 2) for (let s = off; s < TS; s += 10) ctx.fillRect(px + TS - 2 - ins, py + s, 2, 6);
+            if (m & 8) for (let s = off; s < TS; s += 10) ctx.fillRect(px + ins, py + s, 2, 6);
+          }
+          if (kind === 'lava') {
+            // Pulso en ondas lentas que cruzan el lago, no tile por tile.
+            const pulse = (Math.sin(t * 1.6 - X * 0.55 - Y * 0.35) + 1) / 2;
+            ctx.globalAlpha = 0.03 + 0.09 * pulse * pulse;
+            ctx.fillStyle = '#ffd08a';
+            ctx.fillRect(px, py, TS, TS);
+            if (q >= 3 && h < 0.14) {
+              const p = (t * 0.5 + h * 7) % 1;
+              ctx.globalAlpha = 1 - p;
+              ctx.fillStyle = p < 0.5 ? '#fff2a0' : '#ff9a3d';
+              ctx.fillRect(px + 8 + Math.floor(hash(X, Y, 80) * 8) * 2 + Math.round(Math.sin(p * 6) * 2) * 2, py + 20 - Math.floor(p * 20) * 2, 2, 2);
+            }
+          } else if (kind === 'poison' || kind === 'swamp') {
+            if (h < 0.3) {
+              const p = (t * 0.45 + h * 5) % 1;
+              const bx = px + 8 + Math.floor(hash(X, Y, 81) * 8) * 2, by = py + 8 + Math.floor(hash(X, Y, 82) * 8) * 2;
+              ctx.fillStyle = foam;
+              if (p < 0.8) {
+                const r = 1 + Math.floor(p * 3);
+                ctx.globalAlpha = 0.55 * (1 - p * 0.6);
+                ctx.fillRect(bx - r * 2, by, 2, 2); ctx.fillRect(bx + r * 2, by, 2, 2);
+                ctx.fillRect(bx, by - r * 2, 2, 2); ctx.fillRect(bx, by + r * 2, 2, 2);
+              } else {
+                ctx.globalAlpha = (1 - p) * 3;
+                ctx.fillRect(bx - 6, by - 6, 2, 2); ctx.fillRect(bx + 6, by - 6, 2, 2);
+                ctx.fillRect(bx - 6, by + 6, 2, 2); ctx.fillRect(bx + 6, by + 6, 2, 2);
+              }
+            }
+          } else if (kind === 'spark') {
+            const f = Math.floor(t * 10 + h * 97);
+            if (f % 17 === 0) {
+              ctx.globalAlpha = 0.9;
+              ctx.strokeStyle = foam;
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              let yy = py + 4 + hash(f, X, Y) * 24;
+              ctx.moveTo(px, yy);
+              for (let s = 1; s <= 4; s++) { yy = py + 4 + hash(f + s, X, Y) * 24; ctx.lineTo(px + s * 8, yy); }
+              ctx.stroke();
+            }
+          } else if (kind === 'ice' && q >= 3) {
+            const g = Math.sin(X * 0.5 - Y * 0.8 + t * 0.9);
+            if (g > 0.95) {
+              ctx.globalAlpha = (g - 0.95) * 20;
+              ctx.fillStyle = '#ffffff';
+              const gx = px + 12 + Math.floor(h * 4) * 2, gy = py + 12;
+              ctx.fillRect(gx - 4, gy, 10, 2); ctx.fillRect(gx, gy - 4, 2, 10);
+            }
+          }
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+  };
+
+  // ---------------------------------------------------------------- props
+  let shadowSpr = null;
+  function shadowSprite() {
+    if (shadowSpr) return shadowSpr;
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 32;
+    const g = c.getContext('2d');
+    const gr = g.createRadialGradient(32, 16, 0, 32, 16, 32);
+    gr.addColorStop(0, 'rgba(0,0,0,0.42)');
+    gr.addColorStop(0.55, 'rgba(0,0,0,0.30)');
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.setTransform(1, 0, 0, 0.5, 0, 8);
+    g.fillStyle = gr;
+    g.fillRect(0, 0, 64, 64);
+    shadowSpr = c;
+    return c;
+  }
+  const SHADOW = { tree: 1.5, rock: 1.25, pumpkin: 1.1, chest: 1.1, altar: 1.2, crate: 1.1, barrel: 1.0 };
+
+  L.prop = (ctx, prop, t, orig, self, args) => {
+    const ns = L.ns;
+    const P = ns.Tiles.BIOMES[ns.World.biome] || {};
+    const type = prop.type;
+    // Fuentes de luz para la capa de iluminación.
+    if (L.opt('light')) {
+      if (type === 'tree' && P.prop === 'crystal' && lightN < MAX_LIGHTS[L.frameQ]) addLight(prop.x, prop.y - 24, (P.leaf && P.leaf[2]) || '#a8f7e4', 0.7);
+      else if (type === 'pumpkin' && lightN < MAX_LIGHTS[L.frameQ]) addLight(prop.x, prop.y - 14, '#ff9a3d', 0.8);
+      const sk = SHADOW[type];
+      if (sk) {
+        const r = Math.max(9, (prop.r || 12) * sk);
+        ctx.drawImage(shadowSprite(), Math.round(prop.x - r + 3), Math.round(prop.y - r * 0.38), Math.round(r * 2), Math.round(r * 0.9));
+      }
+    }
+    const sway = L.opt('sway') && (type === 'grass' || (type === 'tree' && P.prop !== 'crystal'));
+    if (!sway) return orig.apply(self, args);
+    const grass = type === 'grass';
+    const amp = grass ? 0.11 : 0.035;
+    const gust = 0.5 + 0.5 * Math.sin(t * 0.37 + prop.x * 0.0021 + prop.y * 0.0013);
+    const k = Math.sin(t * (grass ? 2.2 : 1.15) + (prop.wiggle || 0) * 3 + prop.x * 0.013) * amp * (0.55 + 0.45 * gust);
+    ctx.save();
+    ctx.transform(1, 0, k, 1, -k * prop.y, 0);
+    try { return orig.apply(self, args); } finally { ctx.restore(); }
+  };
+
+  // ---------------------------------------------------------------- luz
+  const glowCache = new Map();
+  function glowSprite(col) {
+    let c = glowCache.get(col);
+    if (c) return c;
+    c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const [r, gg, b] = L.rgb(col);
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, `rgba(${r},${gg},${b},1)`);
+    gr.addColorStop(0.4, `rgba(${r},${gg},${b},.45)`);
+    gr.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+    g.fillStyle = gr;
+    g.fillRect(0, 0, 64, 64);
+    glowCache.set(col, c);
+    return c;
+  }
+  let mask = null, mg = null;
+  const lumCache = new WeakMap();
+  const darkFor = (P) => {
+    let d = lumCache.get(P);
+    if (d != null) return d;
+    const [r, g, b] = L.rgb(P.floor && P.floor[0]);
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    d = NX.clamp(0.07 + lum * 0.16, 0.08, 0.2);
+    lumCache.set(P, d);
+    return d;
+  };
+  const MOTES = { forest: '#d8ff6a', swamp: '#b4ff4a', harvest: '#ffb347', volcano: '#ffb04a', cave: '#a8f7e4', ice: '#ffffff', city: '#7ff0ff', ghost: '#c79bff', desert: '#ffe2a8' };
+
+  L.light = (ctx, w, h, q, t) => {
+    if (!L.opt('light')) return;
+    const ns = L.ns, C = ns.Camera, W = ns.World;
+    const P = ns.Tiles.BIOMES[W.biome];
+    const me = NX.me();
+    if (!P || !me) return;
+    const sc = C.scale || 1, left = C.left(), top = C.top();
+    const halloween = !!(ns.Halloween && ns.Halloween.on);
+    // Tarde: un ciclo de 6 minutos con el reloj de la partida, nunca de noche.
+    let eve = 0;
+    if (L.opt('cycle', false) && !halloween) {
+      const gt = (ns.Game.st && ns.Game.st.time) || 0;
+      eve = (1 - Math.cos((gt / 360) * TAU)) / 2;
+    }
+    const dark = darkFor(P) + eve * 0.09;
+    const MW = Math.ceil(w / 4), MH = Math.ceil(h / 4);
+    if (!mask) { mask = document.createElement('canvas'); mg = mask.getContext('2d'); }
+    if (mask.width !== MW || mask.height !== MH) { mask.width = MW; mask.height = MH; }
+    mg.globalCompositeOperation = 'source-over';
+    mg.clearRect(0, 0, MW, MH);
+    mg.fillStyle = `rgba(10,12,32,${dark.toFixed(3)})`;
+    mg.fillRect(0, 0, MW, MH);
+    mg.globalCompositeOperation = 'destination-out';
+    const hole = glowSprite('#000000');
+    const [mx, my] = [(me.x - left) * sc / 4, (me.y - 18 - top) * sc / 4];
+    const pr = Math.min(w, h) * 0.5 / 4;
+    mg.globalAlpha = 1;
+    mg.drawImage(hole, mx - pr, my - pr, pr * 2, pr * 2);
+    for (let i = 0; i < lightN; i++) {
+      const j = i * 4;
+      const sx = (lights[j] - left) * sc / 4, sy = (lights[j + 1] - top) * sc / 4, rr = 80 * sc * lights[j + 3] / 4;
+      if (sx < -rr || sy < -rr || sx > MW + rr || sy > MH + rr) continue;
+      mg.globalAlpha = 0.8;
+      mg.drawImage(hole, sx - rr, sy - rr, rr * 2, rr * 2);
+    }
+    mg.globalAlpha = 1;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(mask, 0, 0, w, h);
+    if (eve > 0.02) {
+      ctx.globalCompositeOperation = 'soft-light';
+      ctx.globalAlpha = eve * 0.28;
+      ctx.fillStyle = '#ff9a4a';
+      ctx.fillRect(0, 0, w, h);
+    }
+    // Brillos de color sobre las fuentes y un halo cálido muy tenue en el jugador.
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.05;
+    const pg = glowSprite('#ffe2b0'), PR = pr * 4 * 0.5;
+    ctx.drawImage(pg, mx * 4 - PR, my * 4 - PR, PR * 2, PR * 2);
+    const pulse = 0.85 + 0.15 * Math.sin(t * 2.1);
+    for (let i = 0; i < lightN; i++) {
+      const j = i * 4;
+      const sx = (lights[j] - left) * sc, sy = (lights[j + 1] - top) * sc, rr = 70 * sc * lights[j + 3];
+      if (sx < -rr || sy < -rr || sx > w + rr || sy > h + rr) continue;
+      ctx.globalAlpha = 0.16 * pulse * lights[j + 3];
+      ctx.drawImage(glowSprite(lights[j + 2]), sx - rr, sy - rr, rr * 2, rr * 2);
+    }
+    // Alto: luciérnagas, brasas o motas según el bioma, fijas al mundo.
+    if (q >= 3) {
+      const col = MOTES[L.styleOf(P)] || '#ffffff';
+      const spr = glowSprite(col);
+      const CELL = 170, hash = L.hash;
+      const c0x = Math.floor(left / CELL), c1x = Math.floor((left + w / sc) / CELL);
+      const c0y = Math.floor(top / CELL), c1y = Math.floor((top + h / sc) / CELL);
+      for (let cy = c0y; cy <= c1y; cy++) {
+        for (let cx = c0x; cx <= c1x; cx++) {
+          const r = hash(cx, cy, 991);
+          if (r > 0.55) continue;
+          const ph = r * 40;
+          const wx = cx * CELL + hash(cx, cy, 992) * CELL + Math.sin(t * 0.6 + ph) * 22;
+          const wy = cy * CELL + hash(cx, cy, 993) * CELL + Math.cos(t * 0.45 + ph) * 16;
+          const sx = (wx - left) * sc, sy = (wy - top) * sc;
+          const blink = (Math.sin(t * 2.3 + ph * 3) + 1) / 2;
+          ctx.globalAlpha = 0.25 + 0.55 * blink;
+          ctx.drawImage(spr, sx - 6, sy - 6, 12, 12);
+          ctx.globalAlpha = 0.9 * blink;
+          ctx.fillStyle = col;
+          ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 1, 2, 2);
+        }
+      }
+    }
+  };
+})();
+
+// ---- features/map-look.js
+// Aspecto del mapa: decoración del suelo, agua y lava animadas, vaivén de la
+// vegetación, luz suave y sombras, con calidad ajustable.
+//
+// Técnica:
+//  - La decoración del suelo (flores, piedrecitas, grietas, huesos, cristales,
+//    sombra al pie de los muros y el resplandor de la lava en la orilla) se
+//    pinta una sola vez por trozo: se envuelve Tiles.paintChunk, que el mundo
+//    llama al crear cada trozo de 16×16 tiles y devuelve su canvas de 256 px.
+//    Coste por cuadro: cero. De paso se guarda la lista de tiles de líquido de
+//    cada trozo (con sus orillas) para las animaciones, sin tocar World.kindAt.
+//  - Caché: el mundo guarda sus trozos en un Map que World.setBiome sustituye
+//    al cambiar de bioma, así que un bioma nuevo se repinta solo con su propia
+//    decoración. Cuando cambia algo de este módulo (activado, calidad,
+//    decoración, modo rendimiento o la bajada automática) se fuerza el
+//    repintado con setBiome(actual + 1, true) y setBiome(actual, true): las dos
+//    llamadas son síncronas y solo renuevan el Map de trozos (la segunda deja
+//    el mismo bioma, sin fundido).
+//  - Lo animado va en map-look-live.js y se dibuja desde tres envolturas:
+//    World.drawLiquid (espacio del mundo, bajo props y entidades),
+//    World.drawProp (vaivén y sombra de cada prop) y World.drawVignette
+//    (espacio de pantalla, antes de la viñeta del juego y del HUD: la luz).
+// Con el módulo apagado las envolturas llaman al original sin más y los trozos
+// se repintan sin decoración, así que el juego queda intacto.
+(() => {
+  const KEY = 'maplook';
+  const L = NX.mapLook || (NX.mapLook = {});
+  const QTXT = ['Apagado', 'Bajo', 'Medio', 'Alto'];
+  const coarse = (() => { try { return matchMedia('(pointer: coarse)').matches; } catch (_) { return false; } })();
+  const DEF_Q = coarse ? '1' : '2';
+  let ns = null;
+  let autoCap = 3;      // tope de la bajada automática (solo en esta sesión)
+  let autoNote = '';
+
+  L.KEY = KEY;
+  L.opt = (k, d = true) => NX.store.get('look:' + k, d) !== false;
+  L.userQ = () => NX.clamp(Math.round(+NX.store.get('look:q', DEF_Q) || 0), 0, 3);
+  L.perfMode = () => NX.isOn('sharp') && NX.store.get('res', 'game') === 'perf';
+  L.level = () => (NX.isOn(KEY) ? Math.min(L.userQ(), L.perfMode() ? 1 : 3, autoCap) : 0);
+  L.liq = new Map(); // "cx,cy" -> Int32Array [tx, ty, orillas, ...]
+
+  // ---------------------------------------------------------------- utilidades
+  const hash = (x, y, s) => {
+    let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(s | 0, 982451653)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  };
+  L.hash = hash;
+  const rgb = (c) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(c || '').trim());
+    if (!m) return [128, 128, 128];
+    const n = parseInt(m[1], 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  L.rgb = rgb;
+  const shade = (c, k) => { const [r, g, b] = rgb(c); const f = (v) => Math.round(NX.clamp(v * k, 0, 255)); return `rgb(${f(r)},${f(g)},${f(b)})`; };
+  const rgba = (c, a) => { const [r, g, b] = rgb(c); return `rgba(${r},${g},${b},${a})`; };
+  L.rgba = rgba;
+  const pick = (a, r) => (Array.isArray(a) && a.length ? a[Math.floor(r * a.length) % a.length] : a);
+
+  // Estilo de decoración según el bioma: por nombre y, si no hay coincidencia,
+  // por el tipo de líquido y de prop. Cubre los 25 del juego, los 5 de Nexus y
+  // las arenas (que usan los biomas de grieta).
+  const BY_NAME = [
+    [/calabaza/i, 'harvest'],
+    [/glaciar|tundra|boreal|hielo|nieve/i, 'ice'],
+    [/volc|[íi]gneo|juicio|ceniza|drag[óo]n/i, 'volcano'],
+    [/desierto|dunas|cantera|ocaso/i, 'desert'],
+    [/ci[ée]naga|pantano|miasma|t[óo]xic/i, 'swamp'],
+    [/voltio|ne[óo]n|acero|callej[óo]n/i, 'city'],
+    [/cementerio|fantasma|embrujad|tenebroso/i, 'ghost'],
+    [/cueva|gruta|templo|cristal/i, 'cave'],
+  ];
+  const styleCache = new WeakMap();
+  L.styleOf = (pal) => {
+    if (!pal) return 'forest';
+    let s = styleCache.get(pal);
+    if (s) return s;
+    const hit = BY_NAME.find(([re]) => re.test(pal.name || ''));
+    s = hit ? hit[1] : pal.prop === 'crystal' ? 'cave' : pal.prop === 'tree' ? 'forest' : pal.liquid === 'lava' ? 'volcano' : pal.liquid === 'ice' ? 'ice' : 'desert';
+    styleCache.set(pal, s);
+    return s;
+  };
+
+  // ---------------------------------------------------------------- decoración
+  // Sprites de pixel art: un carácter es un píxel del trozo (2 px del mundo,
+  // igual que Sprites.PX). '.' es transparente; las letras se resuelven con la
+  // paleta del bioma en colors().
+  const SPR = {
+    pebble: ['.LM.', 'LMMD', 'SDDS'],
+    gravel: ['L...', '.M.L', 'M..D'],
+    crack: ['K....', '.K...', '.KK..', '...K.', '...KK'],
+    ember: ['K.....', '.KE...', '..KEK.', '....EK', '.....K'],
+    iceCrack: ['H....', '.HK..', '..H..', '..KH.', '....H'],
+    flower: ['.A.', 'ACA', '.A.', '.G.'],
+    flowers2: ['A..B', 'G..G'],
+    tuft: ['g..g.', '.gG.g', '.GGG.'],
+    leaf: ['.A...', 'AB...', '...A.', '..BA.'],
+    mushroom: ['.RR.', 'RWRR', '.ww.'],
+    bone: ['WW...WW', '.WWWWW.', 'WW...WW', '.SSSSS.'],
+    skull: ['.WWW.', 'WKWKW', 'WWWWW', '.WKW.'],
+    crystal: ['..B.', '.CB.', '.CBC', 'CCBC', 'SSSS'],
+    crystalS: ['.B', 'CB', 'SS'],
+    snow: ['.LL.', 'LLLL', 'MLLM', '.SS.'],
+    ash: ['D.M', '.D.', 'M..'],
+    stick: ['DD...', '.MDD.', '...MD'],
+    reed: ['T..T', 'g.Tg', 'g.g.', 'GGG.'],
+    puddle: ['.AAA.', 'ABBBA', '.AAA.'],
+    grate: ['KKKKK', 'KMKMK', 'KKKKK', 'KMKMK', 'KKKKK'],
+    cable: ['K.....', '.KK...', '...KKK'],
+    neon: ['.N.', 'NWN', '.N.'],
+    candle: ['.Y.', '.O.', '.W.', '.W.', 'SWS'],
+    grave: ['.MM.', 'MLLM', 'MKLM', 'MLLM', 'DDDD'],
+    wisp: ['.P.', 'PWP', '.P.'],
+    moss: ['.A.', 'ABA', '.A.'],
+    pumpkin: ['..g..', '.OOO.', 'OoOoO', '.OOO.'],
+  };
+  const COMPILED = {};
+  for (const [k, rows] of Object.entries(SPR)) {
+    const px = [];
+    rows.forEach((row, y) => { for (let x = 0; x < row.length; x++) if (row[x] !== '.') px.push(x, y, row[x]); });
+    COMPILED[k] = { w: Math.max(...rows.map((r) => r.length)), h: rows.length, px };
+  }
+
+  // Tabla de cada estilo: [sprite, peso].
+  const STYLES = {
+    forest: [['flower', 3], ['flowers2', 2], ['tuft', 3], ['pebble', 2], ['leaf', 2], ['mushroom', 1], ['crack', 0.4]],
+    cave: [['crystal', 3], ['crystalS', 2], ['pebble', 3], ['gravel', 2], ['crack', 2], ['moss', 1]],
+    volcano: [['ember', 3], ['ash', 2], ['pebble', 2], ['stick', 1.5], ['bone', 1], ['skull', 0.3]],
+    desert: [['pebble', 3], ['gravel', 2], ['crack', 2], ['bone', 1.6], ['skull', 0.4], ['tuft', 2]],
+    ice: [['snow', 3], ['crystalS', 2], ['crystal', 1], ['iceCrack', 2], ['pebble', 1]],
+    swamp: [['reed', 3], ['mushroom', 2], ['puddle', 1.2], ['leaf', 2], ['tuft', 1.5], ['bone', 0.4]],
+    city: [['grate', 1.2], ['crack', 2], ['cable', 1.5], ['neon', 2], ['gravel', 1.5]],
+    ghost: [['candle', 0.8], ['grave', 0.6], ['bone', 1.4], ['skull', 0.5], ['crack', 2], ['wisp', 1.2], ['gravel', 1]],
+    harvest: [['pumpkin', 1.5], ['leaf', 3], ['tuft', 2], ['bone', 0.6], ['candle', 0.4], ['pebble', 1]],
+  };
+  const TOTAL = {};
+  for (const [k, list] of Object.entries(STYLES)) TOTAL[k] = list.reduce((s, [, w]) => s + w, 0);
+  const choose = (style, r) => {
+    const list = STYLES[style] || STYLES.forest;
+    let x = r * TOTAL[style];
+    for (const [k, w] of list) { if ((x -= w) < 0) return k; }
+    return list[list.length - 1][0];
+  };
+
+  // Colores de cada sprite según la paleta del bioma y el estilo.
+  function colors(name, P, style, r) {
+    const rock = P.rock || ['#555', '#777', '#999'];
+    const grass = P.grass || P.leaf || ['#3a6', '#4b7', '#6c9'];
+    const leaf = P.leaf || grass;
+    const S = 'rgba(0,0,0,.22)';
+    const K = shade((P.dirt || P.floor || ['#444'])[0], 0.62);
+    const base = { L: rock[2], M: rock[1], D: rock[0], S, K };
+    switch (name) {
+      case 'crack': return { K };
+      case 'ember': return { K: shade(P.wallEdge || '#300', 1), E: P.liq || '#ff5a1f' };
+      case 'iceCrack': return { H: P.light || '#fff', K: shade(P.floor ? P.floor[0] : '#ccd', 0.82) };
+      case 'flower': return { A: pick(P.flowers, r), C: P.light || '#fff', G: grass[0] };
+      case 'flowers2': return { A: pick(P.flowers, r), B: pick(P.flowers, 1 - r), G: grass[1] || grass[0] };
+      case 'tuft': return { g: grass[2] || grass[0], G: grass[1] || grass[0] };
+      case 'leaf': return style === 'harvest' ? { A: '#d9782a', B: '#a8501c' } : { A: leaf[1] || leaf[0], B: leaf[2] || leaf[0] };
+      case 'mushroom': return style === 'swamp' ? { R: '#9b5ad8', W: '#e9d8ff', w: '#d8cfc0' } : { R: '#d8443a', W: '#fff4e0', w: '#e8dcc4' };
+      case 'bone': case 'skull': return { W: '#e8e0cc', K: '#5a5040', S };
+      case 'crystal': case 'crystalS': return style === 'ice'
+        ? { C: '#9fe4f0', B: '#f2ffff', S }
+        : { C: leaf[1] || '#6fe6cc', B: leaf[3] || leaf[2] || '#fff', S };
+      case 'snow': return { L: '#f6fbff', M: '#d6e6ee', S: 'rgba(40,70,90,.18)' };
+      case 'ash': case 'stick': return { D: '#2a2422', M: '#4a403a' };
+      case 'reed': return { T: '#6a4628', g: grass[2] || grass[0], G: grass[1] || grass[0] };
+      case 'puddle': return { A: P.liqDeep || '#335', B: P.liq || '#447' };
+      case 'grate': return { K: shade(P.floor ? P.floor[0] : '#333', 0.6), M: shade(P.floor ? P.floor[0] : '#333', 1.25) };
+      case 'cable': return { K: '#141420' };
+      case 'neon': return { N: pick(P.flowers, r), W: '#ffffff' };
+      case 'candle': return { Y: '#ffe27a', O: '#ff9a3d', W: '#efe6d2', S };
+      case 'grave': return base;
+      case 'wisp': return { P: pick(P.flowers, r), W: '#ffffff' };
+      case 'moss': return { A: leaf[1] || '#6fe6cc', B: leaf[3] || '#fff' };
+      case 'pumpkin': return { O: '#e8781e', o: '#b04e0e', g: '#3f6b2a' };
+      default: return base;
+    }
+  }
+
+  function stamp(g, name, ox, oy, cols, flip) {
+    const s = COMPILED[name];
+    const p = s.px;
+    let last = null;
+    for (let i = 0; i < p.length; i += 3) {
+      const c = cols[p[i + 2]];
+      if (!c) continue;
+      if (c !== last) { g.fillStyle = c; last = c; }
+      g.fillRect(ox + (flip ? s.w - 1 - p[i] : p[i]), oy + p[i + 1], 1, 1);
+    }
+  }
+
+  const DENSITY = [0, 0.07, 0.12, 0.17];
+  const NB = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+
+  // Se llama justo después del Tiles.paintChunk original.
+  function decorate(canvas, cx, cy, N, kindFn, biome, seed) {
+    const T = ns.Tiles;
+    const P = T.BIOMES[biome];
+    const TT = T.T || 16;
+    if (!P || !canvas || typeof kindFn !== 'function') return;
+    const q = L.level();
+    const tx0 = cx * N, ty0 = cy * N;
+    const kind = (x, y) => kindFn(x, y);
+    // Líquidos con orillas (bit 1 norte, 2 este, 4 sur, 8 oeste = tile vecino sin líquido).
+    const liq = [];
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const X = tx0 + i, Y = ty0 + j;
+        if (kind(X, Y) !== 'liquid') continue;
+        let m = 0;
+        for (let d = 0; d < 4; d++) if (kind(X + NB[d][0], Y + NB[d][1]) !== 'liquid') m |= 1 << d;
+        liq.push(X, Y, m);
+      }
+    }
+    L.liq.set(cx + ',' + cy, Int32Array.from(liq));
+    if (L.liq.size > 160) L.liq.delete(L.liq.keys().next().value);
+    if (!q || !L.opt('decor')) return;
+
+    const g = canvas.getContext('2d');
+    if (!g) return;
+    const style = L.styleOf(P);
+    const dens = DENSITY[q];
+    const glowLiquid = P.liquid === 'lava' || P.liquid === 'spark' || P.liquid === 'poison';
+    const s0 = (seed | 0) ^ 0x5bd1;
+    g.save();
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const X = tx0 + i, Y = ty0 + j;
+        if (kind(X, Y) !== 'floor') continue;
+        const n = kind(X, Y - 1), e = kind(X + 1, Y), s = kind(X, Y + 1), w = kind(X - 1, Y);
+        const px = i * TT, py = j * TT;
+        if (q >= 2) {
+          // Sombra suave al pie de los muros (luz desde arriba a la izquierda).
+          if (n === 'wall') {
+            g.fillStyle = 'rgba(0,0,0,.20)'; g.fillRect(px, py, TT, 1);
+            g.fillStyle = 'rgba(0,0,0,.12)'; g.fillRect(px, py + 1, TT, 1);
+            g.fillStyle = 'rgba(0,0,0,.06)'; g.fillRect(px, py + 2, TT, 1);
+          }
+          if (w === 'wall') { g.fillStyle = 'rgba(0,0,0,.10)'; g.fillRect(px, py, 1, TT); }
+          // Resplandor de la lava, la electricidad o el veneno sobre la orilla.
+          if (glowLiquid) {
+            const sides = [n, e, s, w];
+            for (let d = 0; d < 4; d++) {
+              if (sides[d] !== 'liquid') continue;
+              for (let k = 0; k < 4; k++) {
+                g.fillStyle = rgba(P.liq, [0.16, 0.10, 0.06, 0.03][k]);
+                if (d === 0) g.fillRect(px, py + k, TT, 1);
+                else if (d === 2) g.fillRect(px, py + TT - 1 - k, TT, 1);
+                else if (d === 1) g.fillRect(px + TT - 1 - k, py, 1, TT);
+                else g.fillRect(px + k, py, 1, TT);
+              }
+            }
+          }
+        }
+        // Detalles solo en suelo despejado: lejos de muros y líquidos.
+        if (n !== 'floor' || e !== 'floor' || s !== 'floor' || w !== 'floor') continue;
+        const r = hash(X, Y, s0);
+        if (r >= dens) continue;
+        const r2 = hash(X, Y, s0 + 1), r3 = hash(X, Y, s0 + 2), r4 = hash(X, Y, s0 + 3);
+        const name = choose(style, r2);
+        const sp = COMPILED[name];
+        const ox = px + Math.floor(r3 * (TT - sp.w)), oy = py + Math.floor(r4 * (TT - sp.h));
+        stamp(g, name, ox, oy, colors(name, P, style, r3), r4 < 0.5);
+      }
+    }
+    g.restore();
+  }
+
+  // Repinta los trozos del mundo (ver la nota de caché al inicio).
+  L.refresh = () => {
+    const W = ns && ns.World;
+    if (!W || typeof W.setBiome !== 'function') return;
+    const b = W.biome;
+    if (typeof b !== 'number') return;
+    W.setBiome(b + 1, true);
+    W.setBiome(b, true);
+  };
+
+  // ---------------------------------------------------------------- medidor de FPS
+  // Cuenta los cuadros reales del juego (World.drawVignette se llama una vez
+  // por cuadro en partida). Si la media de dos ventanas seguidas de 2 s queda
+  // por debajo de 45 (o del 75 % del límite de FPS de Nitidez), baja un nivel.
+  let fN = 0, fT = 0, lastF = 0, lowWin = 0;
+  L.fps = 0;
+  L.tick = (now) => {
+    if (ns.Game.state !== 'playing' || document.hidden) { fN = 0; fT = 0; lowWin = 0; return; }
+    if (!fT || now - lastF > 250) { fT = now; fN = 0; }
+    lastF = now;
+    fN++;
+    if (now - fT < 2000) return;
+    L.fps = (fN * 1000) / (now - fT);
+    fN = 0; fT = now;
+    if (!L.opt('auto')) { lowWin = 0; return; }
+    const cap = NX.isOn('sharp') ? +NX.store.get('fps', 0) || 0 : 0;
+    const thr = cap ? Math.min(45, cap * 0.75) : 45;
+    if (L.fps >= thr) { lowWin = 0; return; }
+    if (++lowWin < 2) return;
+    lowWin = 0;
+    const cur = L.level();
+    if (cur <= 1) return;
+    autoCap = cur - 1;
+    autoNote = `Bajada automática a ${QTXT[autoCap]} (${Math.round(L.fps)} FPS).`;
+    NX.toast(`Aspecto del mapa: calidad ${QTXT[autoCap]} para mantener la fluidez`);
+  };
+
+  // ---------------------------------------------------------------- ganchos
+  function hook() {
+    const T = ns.Tiles, W = ns.World;
+    const origPaint = T.paintChunk;
+    T.paintChunk = function (cx, cy, N, kindFn, hFn, biome, seed) {
+      const cv = origPaint.apply(this, arguments);
+      if (NX.isOn(KEY)) {
+        try { decorate(cv, cx, cy, N, kindFn, biome, seed); } catch (err) { NX.trip(KEY, err); }
+      }
+      return cv;
+    };
+
+    const origLiquid = W.drawLiquid;
+    W.drawLiquid = function (ctx, cam, t) {
+      const r = origLiquid.apply(this, arguments);
+      L.frameQ = L.level();
+      if (L.frameQ && L.liquids) {
+        ctx.save();
+        try { L.liquids(ctx, cam, t, L.frameQ); } catch (err) { NX.trip(KEY, err); }
+        ctx.restore();
+      } else if (L.resetFrame) L.resetFrame();
+      return r;
+    };
+
+    const origProp = W.drawProp;
+    W.drawProp = function (ctx, prop, t) {
+      if (!L.frameQ || L.frameQ < 2 || !L.prop || !prop || prop.flat) return origProp.apply(this, arguments);
+      return L.prop(ctx, prop, t, origProp, this, arguments);
+    };
+
+    const origVig = W.drawVignette;
+    W.drawVignette = function (ctx, w, h) {
+      if (NX.isOn(KEY) && NX.inRun()) {
+        const now = performance.now();
+        try { L.tick(now); } catch (err) { NX.trip(KEY, err); }
+        if (L.frameQ >= 2 && L.light) {
+          ctx.save();
+          try { L.light(ctx, w, h, L.frameQ, now / 1000); } catch (err) { NX.trip(KEY, err); }
+          ctx.restore();
+        }
+      }
+      return origVig.apply(this, arguments);
+    };
+  }
+
+  // Cualquier cambio que afecte lo pintado en los trozos los repinta.
+  let sig = null;
+  const sigNow = () => `${L.level()}|${L.opt('decor') ? 1 : 0}`;
+  function watch() {
+    const s = sigNow();
+    if (s === sig) return;
+    sig = s;
+    L.refresh();
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Aspecto del mapa',
+    needs: (n) => n.Tiles && typeof n.Tiles.paintChunk === 'function' && Array.isArray(n.Tiles.BIOMES) && n.World &&
+      typeof n.World.drawLiquid === 'function' && typeof n.World.drawProp === 'function' &&
+      typeof n.World.drawVignette === 'function' && typeof n.World.setBiome === 'function' && n.Camera && n.Game,
+    setup(n) {
+      ns = n;
+      L.ns = n;
+      hook();
+      watch();
+      setInterval(() => { try { watch(); } catch (err) { NX.trip(KEY, err); } }, 500);
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Estilo',
+    title: 'Aspecto del mapa',
+    keywords: 'mapa suelo decoración flores piedras agua lava olas espuma hierba árboles vaivén luz sombras día tarde calidad rendimiento fps',
+    render(el) {
+      const again = () => { try { watch(); } catch (_) { /* se reintenta en el siguiente sondeo */ } };
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true, again));
+      el.appendChild(NX.ui.select('Calidad', 'look:q', QTXT.map((t, i) => [String(i), t]), DEF_Q, () => { autoCap = 3; autoNote = ''; again(); }));
+      el.appendChild(NX.ui.toggle('Decoración del suelo', 'look:decor', true, again));
+      el.appendChild(NX.ui.toggle('Agua y líquidos animados', 'look:liquid', true));
+      el.appendChild(NX.ui.toggle('Vaivén de hierba y árboles', 'look:sway', true));
+      el.appendChild(NX.ui.toggle('Luz suave y sombras', 'look:light', true));
+      el.appendChild(NX.ui.toggle('Ciclo sutil de día y tarde', 'look:cycle', false));
+      el.appendChild(NX.ui.toggle('Bajar la calidad sola si los FPS caen de 45', 'look:auto', true));
+      const lv = L.level();
+      const why = !NX.isOn(KEY) ? '' : L.perfMode() && L.userQ() > 1 ? ' Limitada a Bajo por el modo rendimiento de Nitidez.' : autoNote ? ' ' + autoNote : '';
+      el.appendChild(NX.ui.note(`En uso: ${QTXT[lv]}.${why} Bajo: decoración y brillo del agua. Medio: suma orillas, lava y burbujas, vaivén, luz y sombras. Alto: más detalle, chispas y luciérnagas.`));
     },
   });
 })();
@@ -10683,6 +12519,75 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   });
 })();
 
+// ---- features/official-clean.js
+// Sin videos ni novedades del juego oficial: en la edición no salen el botón
+// de Novedades, el del canal de YouTube, el banner de "Novedades importantes"
+// del menú, la ventana de novedades, el aviso de "Vídeo nuevo en el canal" ni
+// el indicador de directos. Se desactivan las funciones que los abren
+// (NewsUI, VideoUI, LiveUI, BannerUI) en cuanto el juego las crea, y además se
+// ocultan sus botones y pantallas por si una versión futura los abre por otra vía.
+(() => {
+  const KEY = 'offclean';
+  const PARTS = { NewsUI: ['init', 'open'], VideoUI: ['init', 'preview'], LiveUI: ['init'], BannerUI: ['init', 'preview'] };
+  // Activo por defecto solo en la edición.
+  const on = () => NX.isOn(KEY) && !!NX.store.get('offclean:on', !!NX.data.edition);
+
+  NX.css(`html.nx-offclean #btn-news,html.nx-offclean #btn-yt,html.nx-offclean #menu-banner,
+html.nx-offclean #scr-news,html.nx-offclean #scr-video{display:none!important}`);
+
+  function patch(mod) {
+    if (!mod || mod.__nxOff) return mod;
+    for (const fn of PARTS[mod.__nxName] || []) {
+      const orig = mod[fn];
+      if (typeof orig !== 'function') continue;
+      mod[fn] = function () { return on() ? undefined : orig.apply(this, arguments); };
+    }
+    Object.defineProperty(mod, '__nxOff', { value: true });
+    return mod;
+  }
+
+  // El juego asigna estos módulos al namespace después de la cámara: se
+  // parchean al llegar con una trampa en el propio namespace.
+  NX.onNS((ns) => {
+    for (const name of Object.keys(PARTS)) {
+      const tag = (m) => { if (m && typeof m === 'object') { try { Object.defineProperty(m, '__nxName', { value: name }); } catch (_) { /* ya etiquetado */ } } return m; };
+      if (ns[name]) { patch(tag(ns[name])); continue; }
+      try {
+        Object.defineProperty(ns, name, {
+          configurable: true, enumerable: true,
+          get() { return undefined; },
+          set(v) { Object.defineProperty(ns, name, { value: patch(tag(v)), writable: true, configurable: true, enumerable: true }); },
+        });
+      } catch (_) { /* si no se puede, queda el ocultado por CSS */ }
+    }
+  });
+
+  NX.feature({
+    key: KEY,
+    label: 'Sin videos ni novedades del oficial',
+    early: true,
+    setup() {
+      const apply = () => {
+        if (!document.documentElement) { NX.onReady(apply); return; }
+        document.documentElement.classList.toggle('nx-offclean', !!on());
+      };
+      apply();
+      NX.offclean = { apply };
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'General',
+    title: 'Videos y novedades del juego oficial',
+    keywords: 'novedades videos youtube canal banner directo noticias',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Ocultar videos y novedades del oficial', 'offclean:on', !!NX.data.edition, () => NX.offclean && NX.offclean.apply()));
+      el.appendChild(NX.ui.note('Quita el botón de Novedades, el del canal de YouTube, el banner de novedades del menú y los avisos de video nuevo o directo. Si lo vuelve a encender, recargue la página para que el juego los cargue.'));
+    },
+  });
+})();
+
 // ---- features/pickups.js
 // Objetos del mapa: pickups raros que aparecen en el mundo durante la
 // partida y se recogen al pasar cerca. Reloj (congela a los enemigos unos
@@ -11368,6 +13273,657 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
   });
 })();
 
+// ---- features/qol-map.js
+// Mapa base, calidad de vida:
+//  - Lejanos en el minimapa: el minimapa lee unos 1200 de radio (más lejos
+//    obligaría al juego a reconstruir trozos de terreno sin parar). Para
+//    cofres, altares y charcos curativos no hace falta el terreno: cada pocos
+//    segundos se consultan World.propsInCircle y World.specialsNear con un
+//    radio mayor y lo que queda fuera del rango del minimapa se le pasa como
+//    marcador en su borde (NX.mapMarkers, capa "Terrenos, objetos y portales").
+//  - Aviso discreto del cofre sin abrir más cercano: una flecha pequeña
+//    alrededor del jugador con la distancia. Los cofres grandes ya los marca
+//    edge-arrows.js, así que aquí van los normales.
+//  - Imán de experiencia al terminar una marea de Pokémon: tras el aviso
+//    "¡Marea de Pokémon!", cuando quedan menos de la mitad de los enemigos
+//    del pico (o pasan 35 s), toda la experiencia del suelo vuela hacia ti.
+(() => {
+  const KEY = 'qolmap';
+  const MAP_RANGE = 1200; // el radio que dibuja minimap.js
+  const COL = { chest: '#c98a3c', bigchest: '#ffd23f', altar: '#7fe0ff', spring: '#2fbf6a' };
+  const ns = () => NX.ns;
+  const opt = (k, d) => NX.store.get('qolmap:' + k, d);
+  const on = () => NX.isOn(KEY);
+  const alive = (q) => q && !q.used && !q.open && !(q.hp <= 0);
+
+  // ---------------------------------------------------------------- lejanos
+  let far = [], farAt = 0, farRun = null;
+  function scanFar() {
+    const N = ns(), p = NX.me(), W = N && N.World;
+    if (!p || !W) { far = []; return; }
+    const R = NX.clamp(+opt('far', 2400) || 2400, 1400, 4000);
+    const out = [];
+    const outside = (q) => Math.max(Math.abs(q.x - p.x), Math.abs(q.y - p.y)) > MAP_RANGE;
+    const layer = (k) => NX.store.get('map:' + k, true) !== false;
+    if (W.propsInCircle && layer('chests')) for (const q of W.propsInCircle(p.x, p.y, R) || []) if (q.type === 'chest' && alive(q) && outside(q)) out.push(q);
+    if (W.specialsNear) {
+      for (const q of W.specialsNear(p.x, p.y, R) || []) {
+        if (!outside(q)) continue;
+        if (q.type === 'bigchest' && alive(q) && layer('chests')) out.push(q);
+        else if (q.type === 'altar' && alive(q) && layer('altars')) out.push(q);
+        else if (q.type === 'spring' && layer('springs') && (q.charge == null || q.charge >= 0.15)) out.push(q);
+      }
+    }
+    far = out;
+  }
+  NX.mapMarkers = NX.mapMarkers || [];
+  NX.mapMarkers.push({
+    key: KEY,
+    list() {
+      if (!on() || opt('farOn', true) === false || !NX.inRun()) return [];
+      const p = NX.me();
+      const now = performance.now();
+      if (p !== farRun || now - farAt > 3000) {
+        farRun = p;
+        farAt = now;
+        try { scanFar(); } catch (err) { far = []; NX.trip(KEY, err); }
+      }
+      return far.filter(alive2).map((q) => ({ x: q.x, y: q.y, color: COL[q.type] || '#ffd23f', shape: 'item' }));
+    },
+  });
+  const alive2 = (q) => (q.type === 'spring' ? true : alive(q));
+
+  // ---------------------------------------------------------------- cofre cercano
+  let near = null, nearAt = 0;
+  function findNear(p) {
+    const W = ns().World;
+    const R = NX.clamp(+opt('nearR', 700) || 700, 200, 1500);
+    let best = null, bd = Infinity;
+    for (const q of (W.propsInCircle && W.propsInCircle(p.x, p.y, R)) || []) {
+      if (q.type !== 'chest' || !alive(q)) continue;
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d < bd) { bd = d; best = q; }
+    }
+    return best;
+  }
+  function drawNear(ctx, w, h, pl) {
+    if (!on() || opt('nearOn', true) === false || !pl || !NX.inRun()) return;
+    const now = performance.now();
+    if (now - nearAt > 400) { nearAt = now; near = findNear(pl); }
+    if (!near || !alive(near)) return;
+    const [sx, sy] = NX.toScreen(near.x, near.y);
+    const [px, py] = NX.toScreen(pl.x, pl.y - (pl.bodyH || 30) * 0.5);
+    // A la vista y cerca: no hace falta flecha.
+    const d = Math.hypot(near.x - pl.x, near.y - pl.y);
+    if (sx > 40 && sx < w - 40 && sy > 40 && sy < h - 40 && d < 260) return;
+    const a = Math.atan2(sy - py, sx - px), R = 46;
+    const x = px + Math.cos(a) * R, y = py + Math.sin(a) * R;
+    ctx.globalAlpha = 0.85;
+    ctx.translate(x, y);
+    ctx.rotate(a);
+    ctx.beginPath();
+    ctx.moveTo(9, 0); ctx.lineTo(-4, -6); ctx.lineTo(-1, 0); ctx.lineTo(-4, 6); ctx.closePath();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#0b1838'; ctx.stroke();
+    ctx.fillStyle = COL.chest; ctx.fill();
+    ctx.rotate(-a);
+    if (opt('nearDist', true) !== false) {
+      ctx.font = '700 10px Pixelify,"Segoe UI",system-ui,sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const t = Math.round(d / 32) + ' m';
+      const ox = Math.cos(a) * 18, oy = Math.sin(a) * 18;
+      ctx.lineWidth = 3; ctx.strokeStyle = '#0b1838'; ctx.strokeText(t, ox, oy);
+      ctx.fillStyle = '#ffe2b0'; ctx.fillText(t, ox, oy);
+    }
+  }
+
+  // ---------------------------------------------------------------- imán al final de la marea
+  let wave = null, waveSeen = '';
+  function waveTick() {
+    const N = ns();
+    if (!on() || opt('magnet', true) === false || !NX.inRun() || !N.Spawner || !N.EnemyMgr) { wave = null; return; }
+    if (N.Coop && N.Coop.active && !N.Coop.isHost) { wave = null; return; }
+    if (N.Game.state !== 'playing') return;
+    const b = typeof N.Spawner.banner === 'function' ? N.Spawner.banner() : null;
+    const txt = b && b.text ? String(b.text) : '';
+    const count = N.EnemyMgr.count || 0;
+    const now = performance.now();
+    if (/marea/i.test(txt) && !/marea/i.test(waveSeen) && !wave) wave = { t0: now, peak: count };
+    waveSeen = txt;
+    if (!wave) return;
+    const age = now - wave.t0;
+    // El pico se mide en los primeros segundos, cuando llega la marea.
+    if (age < 4000) wave.peak = Math.max(wave.peak, count);
+    if ((age > 6000 && count <= wave.peak * 0.5) || age > 35000) {
+      wave = null;
+      pullXp(N);
+    }
+  }
+  function pullXp(N) {
+    const P = N.Pickups;
+    if (!P) return;
+    let n = 0;
+    if (typeof P.all === 'function') {
+      for (const q of P.all()) if (q && (q.kind === 'xp' || q.kind === 'xpBig') && !q.pulled) { q.pulled = true; n++; }
+    } else if (typeof P.pullAll === 'function') { P.pullAll(); n = 1; }
+    if (n && opt('magnetToast', true) !== false) NX.toast('Marea superada · experiencia atraída');
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Mapa base',
+    needs: (n) => n.World && typeof n.World.propsInCircle === 'function' && typeof n.World.specialsNear === 'function' &&
+      n.Pickups && n.EnemyMgr && n.Spawner && n.Camera && n.Camera.left,
+    setup() {
+      NX.hudLayers.push({ key: KEY, over: drawNear });
+      setInterval(() => { try { waveTick(); } catch (err) { NX.trip(KEY, err); } }, 250);
+      NX.runs.on('start', () => { wave = null; far = []; farAt = 0; near = null; });
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Cámara y mapa',
+    title: 'Mapa base',
+    keywords: 'cofres altares charcos lejos minimapa aviso imán experiencia marea oleada',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.toggle('Cofres, altares y charcos lejanos en el borde del minimapa', 'qolmap:farOn', true));
+      el.appendChild(NX.ui.range('Distancia de búsqueda', 'qolmap:far', 1400, 4000, 100, 2400, (v) => Math.round(v / 32) + ' m'));
+      el.appendChild(NX.ui.note('Necesita el minimapa con la capa "Terrenos, objetos y portales". Respeta las capas Cofres, Altares y Charcos curativos. Se consulta cada 3 s.'));
+      el.appendChild(NX.ui.toggle('Flecha al cofre sin abrir más cercano', 'qolmap:nearOn', true));
+      el.appendChild(NX.ui.range('Radio del aviso', 'qolmap:nearR', 200, 1500, 50, 700, (v) => Math.round(v / 32) + ' m'));
+      el.appendChild(NX.ui.toggle('Distancia junto a la flecha', 'qolmap:nearDist', true));
+      el.appendChild(NX.ui.toggle('Imán de experiencia al terminar una marea', 'qolmap:magnet', true));
+      el.appendChild(NX.ui.toggle('Aviso al atraer la experiencia', 'qolmap:magnetToast', true));
+      el.appendChild(NX.ui.note('La marea se da por terminada cuando quedan menos de la mitad de los enemigos que llegó a haber o a los 35 s. Solo mueve la experiencia, no los objetos.'));
+    },
+  });
+})();
+
+// ---- features/qol-offline.js
+// Modo sin conexión (panel). La edición publicada trae su propio service
+// worker (scripts/build-edition.mjs): precachea el código y la interfaz al
+// instalarse, guarda cada sprite la primera vez que se usa y sirve todo desde
+// la caché sin red. El guardado local del juego no depende de la red y, con
+// Firebase propio, el juego sincroniza al volver la conexión.
+// Aquí se ve cuánto ocupa y se pueden descargar por adelantado los sprites
+// de tus Pokémon (o todos). La lista y los tamaños salen de
+// nexus-offline.json, que genera el mismo script.
+(() => {
+  const KEY = 'qoloff';
+  const MB = (b) => (b / 1048576).toFixed(b >= 10485760 ? 0 : 1).replace('.', ',') + ' MB';
+  let manifestP = null, busy = false, progress = '';
+
+  const sw = () => ('serviceWorker' in navigator ? navigator.serviceWorker : null);
+  const ctrl = () => { const s = sw(); return s && s.controller; };
+  const manifest = () => (manifestP || (manifestP = fetch('nexus-offline.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+
+  function ask(msg, ms = 3000) {
+    const c = ctrl();
+    if (!c) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const ch = new MessageChannel();
+      const t = setTimeout(() => resolve(null), ms);
+      ch.port1.onmessage = (e) => { clearTimeout(t); resolve(e.data); };
+      try { c.postMessage(msg, [ch.port2]); } catch (_) { clearTimeout(t); resolve(null); }
+    });
+  }
+
+  // Archivos de sprites de una carpeta del manifiesto.
+  function files(m, key, shiny) {
+    const e = m.art.dex[key];
+    if (!e) return [];
+    const base = 'assets/pokemon/' + key + '/';
+    const out = (e[2] || m.art.anims).map((a) => base + a + '.png');
+    if (shiny && e[1] > 0) for (const a of (e[3] || e[2] || m.art.anims)) out.push(base + 's/' + a + '.png');
+    return out;
+  }
+  // Carpetas de tus Pokémon: el normal, su shiny si lo tienes y sus megas.
+  function mine(m) {
+    const s = NX.ns && NX.ns.DB && NX.ns.DB.save;
+    if (!s) return { urls: [], bytes: 0, n: 0 };
+    const keys = Object.keys(m.art.dex);
+    const urls = [];
+    let bytes = 0, n = 0;
+    for (const dex of Object.keys(s.owned || {})) {
+      const sh = !!(s.shiny || {})[dex];
+      for (const k of keys.filter((k) => k === dex || (k.startsWith(dex) && /^m[xy]?$/.test(k.slice(dex.length))))) {
+        const e = m.art.dex[k];
+        urls.push(...files(m, k, sh || k !== dex));
+        bytes += e[0] + (sh || k !== dex ? e[1] : 0);
+      }
+      n++;
+    }
+    return { urls, bytes, n };
+  }
+  function all(m) {
+    const urls = [];
+    for (const k of Object.keys(m.art.dex)) urls.push(...files(m, k, true));
+    return { urls, bytes: m.art.bytes };
+  }
+
+  async function download(list, onStep) {
+    if (busy) return;
+    busy = true;
+    try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (_) { /* opcional */ }
+    let i = 0, ok = 0, fail = 0;
+    const next = async () => {
+      while (i < list.length) {
+        const u = list[i++];
+        try { const r = await fetch(u); if (r.ok) { await r.arrayBuffer(); ok++; } else fail++; } catch (_) { fail++; }
+        if ((ok + fail) % 25 === 0 || ok + fail === list.length) onStep(ok, fail, list.length);
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, next));
+    busy = false;
+    onStep(ok, fail, list.length, true);
+  }
+
+  async function render(el) {
+    el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+    if (!NX.isOn(KEY)) return;
+    const st = document.createElement('div');
+    st.innerHTML = '<p class="nx-note">Revisando…</p>';
+    el.appendChild(st);
+    const [m, s, est] = await Promise.all([
+      manifest(), ask({ type: 'nx-status' }),
+      navigator.storage && navigator.storage.estimate ? navigator.storage.estimate().catch(() => null) : null,
+    ]);
+    st.innerHTML = '';
+    if (!ctrl() || !m || !s) {
+      st.appendChild(NX.ui.note('El modo sin conexión funciona en la edición publicada e instalada (su service worker propio). En el laboratorio no está disponible.'));
+      return;
+    }
+    const usage = est ? (est.usageDetails && est.usageDetails.caches) || est.usage : 0;
+    st.appendChild(NX.ui.note(`Estado: ${s.have >= s.pre ? 'listo para jugar sin red' : `preparando (${s.have} de ${s.pre} archivos)`} · versión ${s.v}.`));
+    st.appendChild(NX.ui.note(`Código e interfaz: ${MB(m.code.bytes)} en ${m.code.files} archivos, se guardan solos. Sprites guardados: ${s.art} archivos. Espacio usado por la edición: ${MB(usage || 0)}${est && est.quota ? ' de ' + MB(est.quota) + ' disponibles' : ''}.`));
+    st.appendChild(NX.ui.note('Cada sprite se guarda la primera vez que aparece. Sin red, los Pokémon que nunca viste no tienen sprite hasta volver a conectarte.'));
+    const own = mine(m), every = all(m);
+    const line = NX.ui.note(progress);
+    const b1 = NX.ui.button(`Guardar los sprites de tus Pokémon (${own.n}, unos ${MB(own.bytes)})`, () => {
+      download(own.urls, (ok, fail, tot, end) => { progress = end ? `Listo: ${ok} sprites guardados${fail ? `, ${fail} fallaron` : ''}.` : `Guardando ${ok + fail} de ${tot}…`; line.textContent = progress; });
+    });
+    let armed = false;
+    const b2 = NX.ui.button(`Guardar todos los sprites (unos ${MB(every.bytes)})`, () => {
+      if (!armed) { armed = true; b2.textContent = `¿Seguro? Ocupa unos ${MB(every.bytes)}. Pulsa otra vez`; return; }
+      armed = false;
+      download(every.urls, (ok, fail, tot, end) => { progress = end ? `Listo: ${ok} sprites guardados${fail ? `, ${fail} fallaron` : ''}.` : `Guardando ${ok + fail} de ${tot}…`; line.textContent = progress; });
+    });
+    const b3 = NX.ui.button('Borrar los sprites guardados', async () => {
+      await ask({ type: 'nx-clear-art' });
+      progress = 'Sprites borrados. Se volverán a guardar al usarlos.';
+      line.textContent = progress;
+    });
+    st.append(b1, b2, b3, line);
+  }
+
+  // La primera vez que se instala el service worker, lo que la página ya
+  // cargó (por ejemplo el sprite del compañero en el menú) no pasó por él. En
+  // cuanto toma el control se vuelven a pedir esos sprites para guardarlos.
+  try { if (performance.setResourceTimingBufferSize) performance.setResourceTimingBufferSize(3000); } catch (_) { /* opcional */ }
+  let warmed = false;
+  async function warm() {
+    if (warmed || !ctrl() || !NX.isOn(KEY)) return;
+    warmed = true;
+    const urls = [...new Set(performance.getEntriesByType('resource').map((e) => e.name)
+      .filter((u) => u.startsWith(location.origin + '/') && u.includes('/assets/pokemon/') && !/\/k-[a-z0-9-]+\//.test(u)))];
+    for (let i = 0; i < urls.length; i += 4) {
+      await Promise.all(urls.slice(i, i + 4).map((u) => fetch(u).then((r) => r.arrayBuffer()).catch(() => null)));
+    }
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Modo sin conexión',
+    setup() {
+      const s = sw();
+      if (!s) return;
+      s.addEventListener('controllerchange', () => setTimeout(() => { warm().catch(() => {}); }, 1500));
+      setTimeout(() => { warm().catch(() => {}); }, 5000);
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Datos',
+    title: 'Modo sin conexión',
+    keywords: 'sin conexión offline red caché sprites descargar teléfono espacio ocupa service worker',
+    render(el) { render(el).catch((err) => el.appendChild(NX.ui.note('No se pudo revisar: ' + err.message))); },
+  });
+})();
+
+// ---- features/qol.js
+// Calidad de vida en partida:
+//  - Jugar otra vez: botón en el fin de partida y en el menú con el último
+//    Pokémon y, si lo hubo, el último Modo Nexus (se vuelve a abrir su pestaña
+//    y se pulsa su botón de jugar, así el modo arma una partida nueva).
+//  - Pausa automática al cambiar de app o pestaña. El juego ya pausa solo en
+//    visibilitychange (comprobado en b742e43); aquí queda un respaldo que solo
+//    actúa si tras ocultarse la página la partida sigue corriendo.
+//  - Elegir carta automáticamente (apagado por defecto): tras un retardo toma
+//    la carta marcada "Mejor opción" (run-builds.js). Cualquier tecla o toque
+//    lo cancela.
+//  - Recordatorio de descanso tras N minutos o N partidas (apagado por defecto).
+//  - Partida interrumpida: guardar y restaurar una partida en curso no es
+//    viable de forma fiable. El estado vive en closures del juego sin forma de
+//    leerlo ni de escribirlo: temporizadores del generador y de las mareas,
+//    índice del próximo jefe, semilla y trozos del mundo, enemigos con su
+//    comportamiento, proyectiles, campos de combate, cooldowns internos y el
+//    reloj Game.st. Game.startRun reinicia todo eso y no acepta un estado
+//    previo, así que una restauración parcial daría una partida distinta y
+//    podría dañar el guardado o los logros. En su lugar se guarda un resumen
+//    cada pocos segundos; si la pestaña se cierra a mitad de partida, al
+//    volver se agrega al historial (Alt+R) como partida abandonada e
+//    interrumpida.
+(() => {
+  const KEY = 'qol';
+  const LIVE = 'qol:live', LAST = 'qol:last';
+  const ns = () => NX.ns;
+  const $ = (id) => document.getElementById(id);
+  const opt = (k, d) => NX.store.get('qol:' + k, d);
+  const on = () => NX.isOn(KEY);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ---------------------------------------------------------------- partida interrumpida
+  // Se hace al cargar el archivo: telemetry.js lee su historial más tarde.
+  try {
+    const live = NX.store.get(LIVE, null);
+    if (live && NX.enabled(KEY) && opt('resume', true) !== false) {
+      if ((live.time || 0) >= 30 && Date.now() - (live.saved || 0) < 14 * 864e5) {
+        const h = NX.store.get('tele:runs', []) || [];
+        if (!h.some((r) => r && r.at === live.at)) {
+          h.unshift({
+            v: 1, at: live.at, mon: live.mon, dex: live.dex, shiny: !!live.shiny, coop: false,
+            time: Math.round(live.time), level: live.level || 1, kills: live.kills || 0,
+            dmg: Math.round(live.dmg || 0), dps: Math.round((live.dmg || 0) / Math.max(1, live.time)), taken: 0,
+            outcome: 'quit', interrupted: true, mode: live.mode || '', killer: null, killerHow: null,
+            moves: live.moves || [], series: { step: 1, dmg: [], hp: [] }, kpm: [],
+          });
+          if (h.length > 50) h.length = 50;
+          NX.store.set('tele:runs', h);
+        }
+        NX.store.set('qol:interrupted', { at: live.at, mon: live.mon, time: live.time, level: live.level, saved: live.saved });
+      }
+    }
+    NX.store.set(LIVE, null);
+  } catch (err) { console.warn('[nexus] qol', err); }
+
+  function liveSnap() {
+    const p = NX.me(), N = ns();
+    if (!p || !N || !N.Game || (N.Coop && N.Coop.active)) return;
+    const c = NX.modes && NX.modes.ctx && NX.modes.ctx();
+    if (c && c.sandbox) return; // el laboratorio no cuenta
+    const t = N.Game.st && typeof N.Game.st.time === 'number' ? N.Game.st.time : 0;
+    let moves = [];
+    try { moves = (p.moves || []).slice(0, 5).map((m) => ({ name: (m.def && m.def.name) || m.name || m.id, dmg: Math.round(m.dealt || 0) })); } catch (_) { moves = []; }
+    NX.store.set(LIVE, {
+      at: runAt || Date.now(), saved: Date.now(),
+      mon: (p.mon && p.mon.name) || '#' + p.dex, dex: p.dex, shiny: !!p.shiny,
+      time: t, level: p.level || 1, kills: p.kills || 0, dmg: p.dmgDealt || 0, moves, mode: c ? c.label || c.key : '',
+    });
+  }
+  let runAt = 0;
+
+  // ---------------------------------------------------------------- jugar otra vez
+  let lastCfg = null, launchTab = null, pendingMode = null;
+  function wrapModes() {
+    if (!NX.modes || NX.modes.__qolWrapped) return;
+    const launch = NX.modes.launch;
+    NX.modes.launch = function (cfg) {
+      const chip = document.querySelector('#nexus-modes .nx-md-tabs .chip.on');
+      pendingMode = { tab: chip ? chip.dataset.k : NX.store.get('modes:tab', ''), cfg };
+      try { return launch.apply(this, arguments); } finally { setTimeout(() => { pendingMode = null; }, 1500); }
+    };
+    NX.modes.__qolWrapped = true;
+  }
+  function onStart(p) {
+    runAt = Date.now();
+    const N = ns();
+    if (N.Coop && N.Coop.active) return;
+    const c = NX.modes && NX.modes.ctx && NX.modes.ctx();
+    let mode = null;
+    if (c && pendingMode && pendingMode.cfg && c.key === pendingMode.cfg.key) {
+      mode = { tab: pendingMode.tab, key: c.key, label: c.label || c.key };
+      lastCfg = pendingMode.cfg;
+      launchTab = pendingMode.tab;
+    }
+    pendingMode = null;
+    NX.store.set(LAST, { dex: p.dex, shiny: !!p.shiny, mon: (p.mon && p.mon.name) || '', mode, at: Date.now() });
+    liveSnap();
+  }
+  const lastRun = () => NX.store.get(LAST, null);
+  const label = (L) => (L ? (L.mon || '#' + L.dex) + (L.mode ? ' · ' + L.mode.label : '') : '');
+
+  function canStart() {
+    const N = ns();
+    return !!(N && N.Game && N.Game.state === 'ui' && N.DB && N.DB.save && !(N.Social && N.Social.room) && !(N.Coop && N.Coop.active));
+  }
+  // Menú despejado: solo el menú principal a la vista.
+  const menuClear = () => NX.shown('scr-menu') && ![...document.querySelectorAll('.scr:not(.hidden)')].some((e) => e.id !== 'scr-menu');
+
+  async function replay() {
+    const L = lastRun();
+    if (!L) return;
+    const N = ns();
+    if (N.Game.state === 'over' || NX.shown('scr-over')) {
+      const back = $('btn-again');
+      if (back) back.click();
+      for (let i = 0; i < 60 && !(canStart() && menuClear()); i++) await sleep(100);
+      if (!(canStart() && menuClear())) { NX.toast('Cierra los avisos y usa "Jugar otra vez" en el menú'); return; }
+    }
+    if (!canStart()) { NX.toast('Vuelve al menú principal para jugar otra vez'); return; }
+    if (L.mode && NX.modes && NX.isOn('modes')) {
+      // Se abre la pestaña del modo y se pulsa su botón: el modo arma su partida.
+      try {
+        NX.modes.open(L.mode.tab);
+        const chip = document.querySelector('#nexus-modes .nx-md-tabs .chip.on');
+        const go = document.querySelector('#nexus-modes .nx-md-foot .btn.gold:last-child');
+        if (chip && chip.dataset.k === L.mode.tab && go) { go.click(); return; }
+        if (NX.modes.close) NX.modes.close();
+      } catch (err) { console.warn('[nexus] qol', err); }
+      if (lastCfg && L.mode.key === lastCfg.key && launchTab === L.mode.tab) { NX.modes.launch(Object.assign({}, lastCfg)); return; }
+      NX.toast('No se pudo repetir el modo; abre Modos Nexus');
+      return;
+    }
+    const s = N.DB.save;
+    if (s.owned && s.owned[L.dex]) {
+      s.partner = L.dex;
+      s.partnerShiny = !!(L.shiny && s.shiny && s.shiny[L.dex]);
+    }
+    try { if (N.Audio && N.Audio.sfx) N.Audio.sfx('confirm'); } catch (_) { /* sin sonido */ }
+    if (N.Flow && typeof N.Flow.play === 'function') N.Flow.play(); else N.Game.startRun();
+  }
+
+  NX.css(`#nx-again{margin-top:8px;width:100%}
+#nx-again small,#nx-replay small{display:block;font-size:12px;opacity:.85}
+#nx-ap{margin:10px auto 0;max-width:420px;font-size:13px;color:var(--muted,#b9cbf0);text-align:center;text-shadow:none}
+#nx-ap b{color:var(--gold,#ffd23f)}
+#nx-ap i{display:block;height:4px;margin-top:5px;border-radius:2px;background:rgba(255,255,255,.18);overflow:hidden}
+#nx-ap i::after{content:'';display:block;height:100%;width:var(--p,0%);background:#7dff9a}
+#nx-break .box{max-width:420px;text-align:center}
+#nx-break p{margin:6px 0}`);
+
+  function ensureButtons() {
+    const L = lastRun();
+    const want = on() && opt('replay', true) !== false && !!L;
+    // Fin de partida.
+    let a = $('nx-again');
+    const back = $('btn-again');
+    if (!want || !back) { if (a) a.remove(); } else {
+      if (!a) {
+        a = document.createElement('button');
+        a.id = 'nx-again';
+        a.type = 'button';
+        a.className = 'btn';
+        a.dataset.sfx = 'none';
+        a.addEventListener('click', (e) => { e.stopPropagation(); a.blur(); replay(); });
+        back.after(a);
+      }
+      const t = 'Jugar otra vez<small>' + NX.esc(label(L)) + '</small>';
+      if (a.innerHTML !== t) a.innerHTML = t;
+      const coop = ns().Coop && ns().Coop.active;
+      a.classList.toggle('nx-off', !!coop);
+    }
+    // Menú principal, debajo de Jugar (y de Modos Nexus si está).
+    let m = $('nx-replay');
+    const play = document.querySelector('#scr-menu [data-go="play"]');
+    if (!want || !play) { if (m) m.remove(); return; }
+    if (!m) {
+      m = document.createElement('button');
+      m.id = 'nx-replay';
+      m.type = 'button';
+      m.className = 'menu-item';
+      m.dataset.sfx = 'none';
+      m.addEventListener('click', (e) => { e.stopPropagation(); m.blur(); replay(); });
+    }
+    const anchor = $('nexus-modes-btn') || play;
+    if (anchor.nextElementSibling !== m) anchor.after(m);
+    const t = '<span>Jugar otra vez</span><small>' + NX.esc(label(L)) + '</small>';
+    if (m.innerHTML !== t) m.innerHTML = t;
+  }
+
+  // ---------------------------------------------------------------- pausa automática
+  let gamePauses = null; // true si el juego pausó solo la última vez
+  function onHidden() {
+    if (!document.hidden) return;
+    const N = ns();
+    if (!N || !N.Game || N.Game.state !== 'playing') return;
+    liveSnap();
+    if (!on() || opt('autopause', true) === false || (N.Coop && N.Coop.active)) return;
+    setTimeout(() => {
+      if (N.Game.state === 'paused') { gamePauses = true; return; }
+      if (N.Game.state === 'playing' && document.hidden && typeof N.Game.togglePause === 'function') {
+        gamePauses = false;
+        try { N.Game.togglePause(); } catch (_) { /* nada */ }
+      }
+    }, 60);
+  }
+
+  // ---------------------------------------------------------------- carta automática
+  let ap = null; // { sig, t0, card, cancelled }
+  function apCancel() { if (ap && !ap.cancelled) { ap.cancelled = true; drawAp(); } }
+  function drawAp() {
+    let el = $('nx-ap');
+    const box = document.querySelector('#scr-levelup .box');
+    if (!ap || ap.cancelled || !box) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'nx-ap'; box.appendChild(el); }
+    const d = ap.delay, left = Math.max(0, d - (performance.now() - ap.t0));
+    const nm = (ap.card.querySelector('.nm') || ap.card).firstChild;
+    const name = (nm && nm.textContent ? nm.textContent : '').trim();
+    el.innerHTML = `Elección automática: <b>${NX.esc(name || 'Mejor opción')}</b> en ${(left / 1000).toFixed(1).replace('.', ',')} s · pulsa una tecla o toca para cancelar<i style="--p:${Math.round((1 - left / d) * 100)}%"></i>`;
+  }
+  function apTick() {
+    const want = on() && !!opt('autopick', false) && NX.shown('scr-levelup');
+    if (!want) { if (ap) { ap = null; drawAp(); } return; }
+    const cards = $('cards');
+    const best = cards && cards.querySelector(':scope > .card.nx-best');
+    const sig = cards ? [...cards.children].map((c) => c.textContent.length).join(',') + '|' + (($('lvl-num') || {}).textContent || '') : '';
+    if (!ap || ap.sig !== sig) {
+      if (ap && ap.cancelled && ap.sig !== sig && ap.keepCancel) { ap.sig = sig; return; }
+      ap = best ? { sig, t0: performance.now(), card: best, cancelled: false, delay: NX.clamp(+opt('autopickDelay', 1.5) || 1.5, 0.8, 6) * 1000 } : null;
+      drawAp();
+      return;
+    }
+    if (ap.cancelled || ap.done) return;
+    if (best && best !== ap.card) ap.card = best;
+    drawAp();
+    if (performance.now() - ap.t0 >= ap.delay) {
+      ap.done = true;
+      const card = ap.card;
+      const el = $('nx-ap');
+      if (el) el.remove();
+      try { card.click(); } catch (_) { /* nada */ }
+      // Si la pantalla no cambió (el juego ignora clics muy tempranos), un reintento.
+      setTimeout(() => { if (NX.shown('scr-levelup') && card.isConnected && ap && ap.card === card) { try { card.click(); } catch (_) { /* nada */ } } }, 450);
+    }
+  }
+
+  // ---------------------------------------------------------------- descanso
+  const brk = NX.store.get('qol:breakState', null) || { sec: 0, runs: 0, last: Date.now() };
+  let brkSaveT = 0;
+  function breakTick() {
+    if (!on() || !opt('break', false)) return;
+    const now = Date.now();
+    // Una pausa larga cuenta como descanso.
+    if (now - brk.last > 30 * 60000) { brk.sec = 0; brk.runs = 0; }
+    brk.last = now;
+    const N = ns();
+    if (N && N.Game && N.Game.state === 'playing') brk.sec++;
+    if (now - brkSaveT > 15000) { brkSaveT = now; NX.store.set('qol:breakState', brk); }
+    const due = opt('breakMode', 'min') === 'runs' ? brk.runs >= Math.max(1, +opt('breakRuns', 5) || 5) : brk.sec >= Math.max(5, +opt('breakMin', 60) || 60) * 60;
+    // Solo en momentos tranquilos: fin de partida o menú.
+    if (due && !$('nx-break') && (NX.shown('scr-over') || (N && N.Game && N.Game.state === 'ui' && NX.shown('scr-menu')))) showBreak();
+  }
+  function showBreak() {
+    const min = Math.round(brk.sec / 60);
+    const el = document.createElement('section');
+    el.id = 'nx-break';
+    el.className = 'scr dim';
+    el.style.zIndex = 95;
+    el.innerHTML = `<div class="box"><h3>Un descanso</h3><p>Llevas ${min} min de juego y ${brk.runs} partida${brk.runs === 1 ? '' : 's'} en esta sesión.</p>
+      <p class="sub">Buen momento para descansar la vista, tomar agua y estirarte.</p>
+      <div class="row" style="justify-content:center"><button class="btn gold" type="button">Entendido</button></div></div>`;
+    for (const ev of ['pointerdown', 'mousedown', 'touchstart', 'click', 'wheel']) el.addEventListener(ev, (e) => e.stopPropagation());
+    el.querySelector('button').addEventListener('click', () => {
+      brk.sec = 0; brk.runs = 0; brk.last = Date.now();
+      NX.store.set('qol:breakState', brk);
+      el.remove();
+    });
+    document.body.appendChild(el);
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Calidad de vida en partida',
+    needs: (n) => n.Game && typeof n.Game.startRun === 'function' && typeof n.Game.togglePause === 'function' && n.DB && n.Flow && !!$('btn-again'),
+    setup() {
+      wrapModes();
+      NX.runs.on('start', (p) => { wrapModes(); onStart(p); });
+      NX.runs.on('end', () => {
+        NX.store.set(LIVE, null);
+        if (on() && opt('break', false)) { brk.runs++; NX.store.set('qol:breakState', brk); }
+      });
+      document.addEventListener('visibilitychange', onHidden);
+      addEventListener('pagehide', () => { if (NX.inRun()) liveSnap(); });
+      setInterval(() => { if (NX.inRun()) { try { liveSnap(); } catch (err) { NX.trip(KEY, err); } } }, 5000);
+      setInterval(() => { try { ensureButtons(); } catch (err) { NX.trip(KEY, err); } }, 500);
+      setInterval(() => { try { apTick(); } catch (err) { NX.trip(KEY, err); } }, 100);
+      setInterval(() => { try { breakTick(); } catch (err) { NX.trip(KEY, err); } }, 1000);
+      // Cancelar la carta automática: cualquier tecla o toque.
+      addEventListener('keydown', () => { if (ap) { ap.keepCancel = true; apCancel(); } }, true);
+      addEventListener('pointerdown', () => { if (ap) { ap.keepCancel = true; apCancel(); } }, true);
+    },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'Partida',
+    title: 'Calidad de vida en partida',
+    keywords: 'jugar otra vez repetir rápido pausa automática carta automática mejor opción descanso recordatorio interrumpida reanudar',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.toggle('Botón "Jugar otra vez" (fin de partida y menú)', 'qol:replay', true));
+      el.appendChild(NX.ui.toggle('Pausa automática al cambiar de app o pestaña', 'qol:autopause', true));
+      el.appendChild(NX.ui.note(gamePauses === false
+        ? 'La última vez el juego no pausó solo y Nexus lo hizo por él.'
+        : 'El juego ya pausa solo al ocultarse la pestaña; Nexus solo actúa si la partida sigue corriendo.'));
+      el.appendChild(NX.ui.toggle('Elegir carta automáticamente ("Mejor opción")', 'qol:autopick', false));
+      el.appendChild(NX.ui.range('Retardo antes de elegir', 'qol:autopickDelay', 0.8, 6, 0.1, 1.5, (v) => v.toFixed(1).replace('.', ',') + ' s'));
+      el.appendChild(NX.ui.note('Necesita "Mejor opción en las cartas". Cualquier tecla o toque cancela la elección de esa subida.'));
+      el.appendChild(NX.ui.toggle('Recordatorio de descanso', 'qol:break', false));
+      el.appendChild(NX.ui.select('Avisar tras', 'qol:breakMode', [['min', 'Minutos de juego'], ['runs', 'Partidas']], 'min'));
+      el.appendChild(NX.ui.range('Minutos', 'qol:breakMin', 15, 180, 5, 60, (v) => v + ' min'));
+      el.appendChild(NX.ui.range('Partidas', 'qol:breakRuns', 1, 20, 1, 5, (v) => String(v)));
+      el.appendChild(NX.ui.note('El aviso sale al terminar una partida o en el menú, nunca en mitad del combate. Treinta minutos sin jugar reinician la cuenta.'));
+      el.appendChild(NX.ui.toggle('Guardar en el historial las partidas interrumpidas', 'qol:resume', true));
+      const it = NX.store.get('qol:interrupted', null);
+      el.appendChild(NX.ui.note('Reanudar una partida a medias no es viable: el estado del combate vive dentro del juego sin forma de guardarlo ni restaurarlo. Si cierras la pestaña en partida, al volver queda un resumen en el historial (Alt+R).' +
+        (it ? ` Última interrumpida: ${it.mon}, ${NX.fmtTime(it.time)}, Nv. ${it.level}.` : '')));
+    },
+  });
+})();
+
 // ---- features/raids.js
 // Raids legendarias. De vez en cuando aparece una guarida cerca del jugador:
 // aviso en pantalla, una columna de luz roja durante unos segundos y luego un
@@ -11586,6 +14142,253 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
       el.appendChild(NX.ui.range('Vida del legendario', S_HP, 1, 6, 0.5, 3, (v) => 'x' + v.toFixed(1)));
       el.appendChild(NX.ui.range('Tiempo para vencerlo', S_LIMIT, 60, 300, 15, 150, (v) => NX.fmtTime(v)));
       el.appendChild(NX.ui.note('Aparece una guarida con aviso y, a los 5 segundos, un legendario gigante (el doble de tamaño de un jefe) con la vida de jefe multiplicada. Vencerlo da lo de todo jefe más monedas extra, un boleto y, si está activa la megaevolución, una Megapiedra. No ocurre con otro jefe en pantalla, en arenas de grieta ni en el Juicio.'));
+    },
+  });
+})();
+
+// ---- features/rebind.js
+// Reasignar teclas de Nexus sin tocar los módulos que las escuchan.
+//
+// Cada módulo registra su atajo con NX.keys.bind y lo compara con e.code y
+// e.altKey. El listener de NX.keys va en captura sobre window y se registra
+// antes que cualquier módulo, así que nadie puede ponerse delante. Lo primero
+// que hace con cada tecla es preguntar NX.typing(e.target): aquí se envuelve
+// esa función y, con window.event (la tecla en curso), se traduce:
+//  - La tecla nueva de una acción se traga (ni Nexus ni el juego la ven) y se
+//    reemite en window como un KeyboardEvent sintético con la combinación
+//    original, que es la que esperan los módulos. Es el mismo camino que usa
+//    el menú táctil (mobile.js).
+//  - La combinación original de una acción reasignada deja de llegar a
+//    Nexus si así se elige (solo las teclas reales; los eventos sintéticos
+//    del menú táctil siguen funcionando).
+// Si el navegador no tuviera window.event, un listener propio hace la
+// reemisión (sin poder desactivar la original).
+(() => {
+  const KEY = 'rebind';
+  const MAP = 'rebind:map';
+  const ACTIONS = [
+    { id: 'panel', label: 'Panel de Nexus', orig: ['Alt+KeyN'] },
+    { id: 'map', label: 'Minimapa', feat: 'minimap', orig: ['Alt+KeyM'] },
+    { id: 'fovUp', label: 'Campo de visión: alejar', feat: 'fov', orig: ['Alt+Equal', 'Alt+NumpadAdd', 'Alt+BracketRight'], repeat: true },
+    { id: 'fovDown', label: 'Campo de visión: acercar', feat: 'fov', orig: ['Alt+Minus', 'Alt+NumpadSubtract', 'Alt+Slash'], repeat: true },
+    { id: 'fovReset', label: 'Campo de visión: normal', feat: 'fov', orig: ['Alt+Digit0', 'Alt+Numpad0'] },
+    { id: 'shot', label: 'Captura limpia', feat: 'cleancap', orig: ['Alt+KeyS'] },
+    { id: 'hitbox', label: 'Hitboxes', feat: 'hitboxes', orig: ['Alt+KeyB'] },
+    { id: 'fps', label: 'Contador de FPS', feat: 'fps', orig: ['Alt+KeyF'] },
+    { id: 'enc', label: 'Enciclopedia', feat: 'enc', orig: ['F1', 'Alt+KeyI'] },
+    { id: 'hist', label: 'Historial', feat: 'hist', orig: ['Alt+KeyR'] },
+    { id: 'mega', label: 'Megaevolución', feat: 'mega', orig: ['KeyG'] },
+    { id: 'dmax', label: 'Dinamax', feat: 'dynamax', orig: ['KeyH'] },
+    { id: 'tera', label: 'Teracristalización', feat: 'tera', orig: ['KeyT'] },
+    { id: 'z', label: 'Movimiento Z', feat: 'zmove', orig: ['KeyZ'] },
+  ];
+  // Teclas sin modificador que usa el juego (o Nexus fuera de esta lista).
+  const RESERVED = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE', 'KeyR', 'KeyP',
+    'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Space', 'Tab', 'Enter', 'Escape', 'Backspace', 'NumpadEnter']);
+  const MODS = new Set(['AltLeft', 'AltRight', 'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'MetaLeft', 'MetaRight', 'CapsLock', 'ContextMenu', 'Fn']);
+
+  const comboOf = (e) => (e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + (e.metaKey ? 'Meta+' : '') + e.code;
+  const parse = (c) => {
+    const parts = String(c).split('+');
+    const code = parts.pop();
+    return { code, ctrl: parts.includes('Ctrl'), alt: parts.includes('Alt'), shift: parts.includes('Shift'), meta: parts.includes('Meta') };
+  };
+  const KEYNAME = { Equal: '=', Minus: '-', Slash: '/', BracketRight: ']', BracketLeft: '[', Backquote: '`', Comma: ',', Period: '.', Semicolon: ';', Quote: "'", Backslash: '\\', NumpadAdd: '+', NumpadSubtract: '-' };
+  const keyOf = (code) => {
+    if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+    if (/^(Digit|Numpad)\d$/.test(code)) return code.slice(-1);
+    return KEYNAME[code] || code;
+  };
+  const SHOW = { Equal: '=', Minus: '−', Slash: '/', BracketRight: ']', BracketLeft: '[', Backquote: '`', Comma: ',', Period: '.', Semicolon: 'Ñ', Quote: "'", Backslash: '\\',
+    NumpadAdd: 'Num +', NumpadSubtract: 'Num −', Space: 'Espacio' };
+  const nice = (c) => {
+    const p = parse(c);
+    let k = p.code;
+    if (/^Key[A-Z]$/.test(k)) k = k.slice(3);
+    else if (/^Digit\d$/.test(k)) k = k.slice(5);
+    else if (/^Numpad\d$/.test(k)) k = 'Num ' + k.slice(6);
+    else k = SHOW[k] || k;
+    return [p.ctrl && 'Ctrl', p.alt && 'Alt', p.shift && 'Mayús', p.meta && 'Meta', k].filter(Boolean).join(' + ');
+  };
+
+  const map = () => NX.store.get(MAP, {}) || {};
+  const custom = (id) => map()[id] || null;
+  const current = (a) => custom(a.id) || a.orig[0];
+
+  // ¿Esta tecla es la nueva de alguna acción?
+  function actionFor(e) {
+    const c = comboOf(e), m = map();
+    for (const a of ACTIONS) if (m[a.id] && m[a.id] === c) return a;
+    return null;
+  }
+  // ¿Es la combinación original de una acción reasignada? (Mayús no cuenta.)
+  function isBlockedOrig(e) {
+    if (!NX.store.get('rebind:block', true)) return false;
+    const m = map();
+    for (const a of ACTIONS) {
+      if (!m[a.id]) continue;
+      for (const o of a.orig) {
+        const p = parse(o);
+        if (p.code === e.code && p.alt === e.altKey && p.ctrl === e.ctrlKey && p.meta === e.metaKey && (p.shift ? e.shiftKey : true)) return true;
+      }
+    }
+    return false;
+  }
+
+  const synth = new WeakSet();
+  let emitting = false;
+  function emit(a) {
+    const p = parse(a.orig[0]);
+    const init = { code: p.code, key: keyOf(p.code), altKey: p.alt, ctrlKey: p.ctrl, shiftKey: p.shift, metaKey: p.meta, bubbles: true, cancelable: true };
+    const down = new KeyboardEvent('keydown', init), up = new KeyboardEvent('keyup', init);
+    synth.add(down); synth.add(up);
+    emitting = true;
+    try { window.dispatchEvent(down); window.dispatchEvent(up); } finally { emitting = false; }
+  }
+  NX.rebind = { actions: () => ACTIONS.map((a) => ({ id: a.id, label: a.label, key: current(a), custom: !!custom(a.id) })), emit: (id) => { const a = ACTIONS.find((x) => x.id === id); if (a) emit(a); } };
+
+  // ---- traductor
+  let viaTyping = false;
+  function install() {
+    const orig = NX.typing;
+    if (typeof orig !== 'function' || orig.__nxRebind) return;
+    const wrapped = function (el) {
+      let e = null;
+      try { e = window.event; } catch (_) { e = null; }
+      // Capturando una tecla nueva: se atiende aquí, antes que el juego (que en
+      // algunas pantallas mueve el foco a sus propios campos al teclear).
+      if (cap && e && e.type === 'keydown' && e.target === cap.el) {
+        cap.fn(e);
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return true;
+      }
+      const r = orig.apply(this, arguments);
+      if (r) return r;
+      if (!e || e.type !== 'keydown' || typeof e.code !== 'string' || emitting || synth.has(e) || !NX.isOn(KEY)) return r;
+      viaTyping = true;
+      const a = actionFor(e);
+      if (a) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (!e.repeat || a.repeat) emit(a);
+        return true;
+      }
+      // Antes el módulo se quedaba con esta tecla y el juego no la veía: se mantiene así.
+      if (e.isTrusted && isBlockedOrig(e)) { e.preventDefault(); e.stopImmediatePropagation(); return true; }
+      return r;
+    };
+    wrapped.__nxRebind = true;
+    NX.typing = wrapped;
+    // Respaldo sin window.event: reemite después de NX.keys.
+    addEventListener('keydown', (e) => {
+      if (viaTyping || emitting || synth.has(e) || !NX.isOn(KEY) || NX.typing(e.target)) return;
+      const a = actionFor(e);
+      if (!a) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!e.repeat || a.repeat) emit(a);
+    }, true);
+  }
+
+  // ---- captura de la tecla nueva
+  let cap = null; // { el, fn } mientras se espera la tecla nueva
+  NX.css(`#nexus-panel .nx-rb{display:grid;grid-template-columns:1fr auto auto auto;gap:4px 8px;align-items:center;margin:4px 0}
+#nexus-panel .nx-rb kbd{font:inherit;font-size:12px;padding:1px 7px;border-radius:5px;background:#0b1838;border:1px solid #5b83d6;white-space:nowrap}
+#nexus-panel .nx-rb kbd.nx-cu{border-color:#ffd23f;color:#ffd23f}
+#nexus-panel .nx-rb .nx-btn{margin:0;padding:1px 8px;font-size:12px}
+#nexus-panel .nx-rb input{font:inherit;font-size:12px;width:150px;background:#ffd23f;color:#0b1838;border:0;border-radius:5px;padding:3px 6px;text-align:center}
+#nexus-panel .nx-rb-msg{min-height:16px;font-size:12px;color:#ffb3c1}`);
+
+  function renderList(box) {
+    box.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'nx-rb';
+    const msg = document.createElement('p');
+    msg.className = 'nx-rb-msg';
+    for (const a of ACTIONS) {
+      const cu = custom(a.id);
+      const lab = document.createElement('span');
+      lab.textContent = a.label + (a.feat && !NX.isOn(a.feat) ? ' (módulo apagado)' : '');
+      const kb = document.createElement('kbd');
+      kb.className = cu ? 'nx-cu' : '';
+      kb.textContent = nice(current(a));
+      kb.title = cu ? 'Original: ' + a.orig.map(nice).join(' o ') : 'Tecla original';
+      const ch = NX.ui.button('Cambiar', () => capture(a, kb, ch, msg, box));
+      const rs = NX.ui.button('Original', () => { setKey(a, null); renderList(box); });
+      rs.disabled = !cu;
+      grid.append(lab, kb, ch, rs);
+    }
+    box.append(grid, msg);
+  }
+  function setKey(a, combo) {
+    const m = Object.assign({}, map());
+    if (combo && combo !== a.orig[0]) m[a.id] = combo; else delete m[a.id];
+    NX.store.set(MAP, m);
+  }
+  function problem(a, combo) {
+    const p = parse(combo);
+    if (p.code === 'Escape') return 'Esc está reservada para cerrar ventanas.';
+    if (!p.alt && !p.ctrl && !p.meta && RESERVED.has(p.code)) return nice(combo) + ' la usa el juego. Prueba con Alt + una tecla.';
+    for (const b of ACTIONS) {
+      if (b === a) continue;
+      if (current(b) === combo) return nice(combo) + ' ya es "' + b.label + '".';
+      if (!custom(b.id) && b.orig.includes(combo)) return nice(combo) + ' ya es "' + b.label + '".';
+    }
+    if (a.orig.includes(combo)) return null;
+    if (p.ctrl && ['KeyW', 'KeyT', 'KeyN', 'Tab', 'KeyQ'].includes(p.code)) return 'El navegador no deja usar ' + nice(combo) + '.';
+    return null;
+  }
+  function capture(a, kb, btn, msg, box) {
+    const inp = document.createElement('input');
+    inp.readOnly = true;
+    inp.value = 'Pulsa la tecla nueva';
+    inp.setAttribute('aria-label', 'Pulsa la tecla nueva para ' + a.label);
+    kb.replaceWith(inp);
+    btn.disabled = true;
+    msg.textContent = 'Esc cancela · Retroceso vuelve a la original';
+    const done = () => { if (cap && cap.el === inp) cap = null; renderList(box); };
+    const seen = new WeakSet();
+    const handle = (e) => {
+      if (seen.has(e)) return;
+      seen.add(e);
+      if (MODS.has(e.code)) return;
+      if (e.code === 'Escape') { done(); return; }
+      if ((e.code === 'Backspace' || e.code === 'Delete') && !e.altKey && !e.ctrlKey) { setKey(a, null); done(); return; }
+      const c = comboOf(e);
+      const bad = problem(a, c);
+      if (bad) { msg.textContent = bad; return; }
+      setKey(a, c);
+      done();
+      NX.toast(a.label + ': ' + nice(c));
+    };
+    cap = { el: inp, fn: handle };
+    // Respaldo por si la tecla no pasó por NX.keys.
+    inp.addEventListener('keydown', (e) => { e.preventDefault(); e.stopPropagation(); handle(e); });
+    inp.addEventListener('blur', () => setTimeout(() => { if (inp.isConnected) done(); }, 150));
+    inp.focus();
+  }
+
+  NX.feature({
+    key: KEY,
+    label: 'Reasignar teclas',
+    early: true,
+    setup() { install(); },
+  });
+
+  NX.settings.section({
+    key: KEY,
+    tab: 'General',
+    title: 'Reasignar teclas',
+    keywords: 'teclas atajos reasignar cambiar tecla mega dinamax tera z minimapa panel fov captura hitboxes fps enciclopedia historial',
+    render(el) {
+      el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
+      el.appendChild(NX.ui.toggle('La tecla original deja de funcionar al reasignarla', 'rebind:block', true));
+      const box = document.createElement('div');
+      el.appendChild(box);
+      renderList(box);
+      el.appendChild(NX.ui.button('Restablecer todas', () => { NX.store.set(MAP, {}); renderList(box); }));
+      el.appendChild(NX.ui.note('Las teclas en dorado están cambiadas. El menú táctil sigue funcionando igual. Los textos de ayuda de otros módulos muestran la tecla original.'));
     },
   });
 })();
@@ -11966,7 +14769,7 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
     const det = cols.querySelector('.nx-det');
     const cause = r.outcome === 'death' && r.killer ? ` · ${NX.esc(r.killer)}${r.killerHow ? ' (' + NX.esc(r.killerHow) + ')' : ''}` : '';
     det.innerHTML = `<h4 style="margin-top:0">${NX.esc(r.mon)}${r.shiny ? ' ★' : ''} · ${fmtDate(r.at)}</h4>
-      <p class="nx-note">${OUTCOME[r.outcome] || 'Partida'}${cause}</p>${tiles(r)}
+      <p class="nx-note">${r.interrupted ? 'Interrumpida (se cerró la pestaña)' : OUTCOME[r.outcome] || 'Partida'}${cause}</p>${tiles(r)}
       <h4>Daño en el tiempo</h4><div class="nx-chart"></div>
       <div class="nx-leg"><i style="background:#ffd23f"></i>daño acumulado<i style="background:#5be08a"></i>vida</div>
       <h4>Movimientos con más daño</h4>
