@@ -170,7 +170,7 @@ writeFileSync(join(out, '.gitattributes'), '* -text\n');
 // uno en Linux (el workflow) trae LF. Sin esto, el mismo juego genera una
 // edición distinta según la máquina y el aviso de versión nueva salta sin motivo.
 for (const f of walk(out)) {
-  if (!/\.(html?|js|mjs|css|json|webmanifest|txt|xml|md|svg)$/i.test(f)) continue;
+  if (!/\.(html?|js|mjs|css|json|webmanifest|txt|xml|md|svg)$/i.test(f) && !/(^|[\\/])(LICENSE|NOTICE|README|AUTHORS)$/i.test(f)) continue;
   const s = readFileSync(f, 'utf8');
   if (s.includes('\r\n')) writeFileSync(f, s.replace(/\r\n/g, '\n'));
 }
