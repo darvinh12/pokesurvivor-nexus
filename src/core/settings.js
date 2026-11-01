@@ -81,7 +81,7 @@ let panel = null, fab = null;
 const STATUS_TXT = { ok: 'activo', pending: 'esperando', missing: 'falta', broken: 'roto' };
 
 // Pestañas del panel, en orden. Una sección sin tab cae en "General".
-const TABS = ['Cámara y mapa', 'HUD', 'Partida', 'Datos', 'Menús', 'Rendimiento', 'General'];
+const TABS = ['Cámara y mapa', 'HUD', 'Partida', 'Modos', 'Datos', 'Menús', 'Estilo', 'Rendimiento', 'General'];
 const TAB_OF = { fov: 'Cámara y mapa', minimap: 'Cámara y mapa', sharp: 'Rendimiento', shortcuts: 'Partida', combat: 'Partida' };
 const tabOf = (s) => s.tab || TAB_OF[s.key] || 'General';
 let curTab = NX.store.get('panelTab', TABS[0]), query = '';
