@@ -126,7 +126,7 @@
         for (const ev of ['pointerdown', 'mousedown', 'touchstart', 'click']) el.addEventListener(ev, (e) => e.stopPropagation());
         // Sin posición guardada la decide render(); al arrastrarlo queda donde lo dejes.
         drag = NX.draggable(el, 'rb', () => ({ x: 12, y: 150 }));
-        setInterval(() => { try { render(); } catch (err) { NX.trip(KEY, err); } }, 200);
+        NX.every(200, () => { try { render(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY, leave: true });
       });
       NX.runs.on('start', () => { cacheDex = null; cacheStyles = null; });
     },

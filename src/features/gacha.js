@@ -7,6 +7,15 @@
 // Gacha.pull gasta todos los tickets en tandas de diez: primero los ×10, luego
 // los normales de cien en cien y de diez en diez. Cada tanda de diez conserva
 // la épica garantizada. Los tickets normales que no llegan a diez se quedan.
+// Carga diferida (src/core/lazy.js): en la edición, lo que sigue a
+// //#nexus-lazy va en un archivo aparte que se carga al primer uso; esta
+// declaración deja mientras tanto su estado, su sección del panel y sus atajos.
+NX.lazy.declare('gacha', {
+  feats: [['gacha', 'Gacha rápido']],
+  sections: [{ key: 'gacha', tab: 'Menús', title: 'Gacha rápido', keywords: 'tickets tirar todos animación saltar región faltan legendaria' }],
+  screens: ['scr-gacha'],
+});
+//#nexus-lazy
 (() => {
   const KEY = 'gacha';
   let armed = false, forceSkip = false;
@@ -162,7 +171,8 @@
 #nx-regions th,#nx-regions td{text-align:left;padding:4px 6px;border-bottom:1px solid rgba(255,255,255,.15)}
 #nx-regions .n{text-align:right;font-variant-numeric:tabular-nums}
 #nx-regions tr.most td{color:var(--gold,#ffd23f)}
-#nx-regions button{font:inherit;font-size:12px;font-weight:700;color:inherit;background:none;border:1px solid currentColor;border-radius:4px;padding:1px 6px;cursor:pointer}
+#nx-regions button{font:inherit;font-size:13px;font-weight:700;color:inherit;background:none;border:1px solid currentColor;border-radius:4px;padding:2px 8px;cursor:pointer}
+@media (pointer:coarse){#nx-regions button{min-height:40px;padding:4px 12px}}
 #nx-regions .miss{font-size:12.5px;line-height:1.5;padding:4px 6px 8px}
 .nx-off{display:none!important}`);
 

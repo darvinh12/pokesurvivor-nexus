@@ -1,6 +1,15 @@
 // Enciclopedia (F1 o Alt+I): en partida, tus movimientos, objeto, clima y
 // debilidades; fuera de ella, un buscador de movimientos, objetos y Pokémon,
 // y la tabla de tipos. Todo se lee de los datos del juego.
+// Carga diferida (src/core/lazy.js): en la edición, lo que sigue a
+// //#nexus-lazy va en un archivo aparte que se carga al primer uso; esta
+// declaración deja mientras tanto su estado, su sección del panel y sus atajos.
+NX.lazy.declare('dex', {
+  feats: [['enc', 'Enciclopedia']],
+  sections: [{ key: 'enc', tab: 'Datos', title: 'Enciclopedia', keywords: 'enciclopedia buscador movimientos objetos pokemon tipos f1' }],
+  keys: [{ feat: 'enc', test: (e) => !e.repeat && (e.code === 'F1' || (e.altKey && !e.ctrlKey && e.code === 'KeyI')) }],
+});
+//#nexus-lazy
 (() => {
   const KEY = 'enc';
   const TABS = [['run', 'En partida'], ['moves', 'Movimientos'], ['items', 'Objetos'], ['mons', 'Pokémon'], ['types', 'Tipos']];
@@ -12,17 +21,22 @@
   background:linear-gradient(#24407f,#152a5c);color:#fff;border:2px solid #f4f8ff;outline:2px solid #0b1838;border-radius:10px;
   box-shadow:inset 0 0 0 2px #5b83d6,0 6px 0 #0a1430;font:13px/1.35 var(--font,'Pixelify',system-ui,sans-serif)}
 #nexus-enc h2{margin:0 0 6px;font-size:19px;color:#ffd23f;display:flex;justify-content:space-between;align-items:center;gap:10px}
-#nexus-enc h2 small{font-size:11px;color:#b9cbf0;font-weight:400;margin-left:auto}
+#nexus-enc h2 small{font-size:12px;color:#b9cbf0;font-weight:400;margin-left:auto}
 #nexus-enc .nx-x{background:#0b1838;color:#fff;border:2px solid #f4f8ff;border-radius:6px;font:inherit;font-size:13px;cursor:pointer;padding:2px 10px}
 #nexus-enc .nx-etabs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
-#nexus-enc .nx-etabs button{font:inherit;font-size:12px;background:#0b1838;color:#cfe0ff;border:1px solid #5b83d6;border-radius:12px;padding:2px 11px;cursor:pointer}
+#nexus-enc .nx-etabs button{font:inherit;font-size:13px;background:#0b1838;color:#cfe0ff;border:1px solid #5b83d6;border-radius:12px;padding:2px 11px;cursor:pointer}
 #nexus-enc .nx-etabs button.on{background:#ffd23f;color:#0b1838;border-color:#ffd23f}
 #nexus-enc .nx-etabs button:disabled{opacity:.4;cursor:default}
+@media (max-height:520px){#nexus-enc .nx-ebox{height:calc(100vh - 12px);height:calc(100dvh - 12px);width:calc(100vw - 12px);padding:8px 10px}
+#nexus-enc h2 small{display:none}
+#nexus-enc .nx-etabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;flex:none}#nexus-enc .nx-etabs button{flex:none}}
+@media (pointer:coarse){#nexus-enc .nx-etabs button,#nexus-enc .nx-x,#nexus-enc .nx-eq{min-height:40px;font-size:14px}#nexus-enc .nx-etabs button{padding:4px 14px;border-radius:20px}
+#nexus-enc .nx-elist button{min-height:40px}}
 #nexus-enc .nx-ebody{flex:1;min-height:0;display:flex;gap:10px}
 #nexus-enc .nx-ecol{display:flex;flex-direction:column;min-height:0;width:42%}
 #nexus-enc .nx-eq{font:inherit;background:#0b1838;color:#fff;border:1px solid #5b83d6;border-radius:6px;padding:5px 8px;margin-bottom:6px}
 #nexus-enc .nx-elist{flex:1;overflow:auto;display:flex;flex-direction:column;gap:2px;padding-right:4px}
-#nexus-enc .nx-elist button{display:flex;align-items:center;gap:6px;text-align:left;font:inherit;font-size:12px;background:rgba(11,24,56,.6);color:#fff;border:1px solid transparent;border-radius:6px;padding:3px 7px;cursor:pointer}
+#nexus-enc .nx-elist button{display:flex;align-items:center;gap:6px;text-align:left;font:inherit;font-size:13px;background:rgba(11,24,56,.6);color:#fff;border:1px solid transparent;border-radius:6px;padding:3px 7px;cursor:pointer}
 #nexus-enc .nx-elist button:hover{border-color:#5b83d6}
 #nexus-enc .nx-elist button.on{border-color:#ffd23f;background:rgba(255,210,63,.12)}
 #nexus-enc .nx-elist button .g{margin-left:auto;display:flex;gap:2px;align-items:center}
@@ -33,11 +47,11 @@
 #nexus-enc .nx-sec>h4{margin:0 0 5px;font-size:13px;color:#9fd0ff}
 #nexus-enc .nx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
 #nexus-enc .nx-grid>.nx-card{padding:7px 9px;border-radius:8px;background:rgba(11,24,56,.7);border:1px solid rgba(91,131,214,.5)}
-#nexus-enc .nx-kv2{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:2px 12px;font-size:12px}
+#nexus-enc .nx-kv2{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:2px 12px;font-size:13px}
 #nexus-enc .nx-kv2 span{color:#b9cbf0}
 #nexus-enc .nx-mvs{display:flex;flex-wrap:wrap;gap:4px}
-#nexus-enc .nx-mvs button{font:inherit;font-size:11px;padding:1px 8px;border-radius:7px;border:0;color:#fff;cursor:pointer;text-shadow:1px 1px 0 #0a1430}
-#nexus-enc .nx-note2{font-size:11px;color:#b9cbf0;margin:4px 0}
+#nexus-enc .nx-mvs button{font:inherit;font-size:12px;padding:1px 8px;border-radius:7px;border:0;color:#fff;cursor:pointer;text-shadow:1px 1px 0 #0a1430}
+#nexus-enc .nx-note2{font-size:12px;color:#b9cbf0;margin:4px 0}
 #nexus-enc .nx-note2 a{color:inherit;text-decoration:underline}
 #nexus-enc table.nx-chart{border-collapse:collapse;font-size:10px;margin:0 auto}
 #nexus-enc table.nx-chart th,#nexus-enc table.nx-chart td{width:26px;height:20px;text-align:center;padding:0}

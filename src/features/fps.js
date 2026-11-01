@@ -26,7 +26,6 @@
     drag = NX.draggable(el, 'fps', () => ({ x: innerWidth - (el.offsetWidth || 70) - 12, y: innerHeight - (el.offsetHeight || 22) - 10 }));
     let n = 0, t0 = performance.now(), prev = t0, worst = 0, lastVis = 0;
     const tick = (now) => {
-      requestAnimationFrame(tick);
       n++;
       worst = Math.max(worst, now - prev);
       prev = now;
@@ -45,7 +44,7 @@
         n = 0; t0 = now; worst = 0;
       }
     };
-    requestAnimationFrame(tick);
+    NX.every('frame', tick, { key: KEY });
   }
 
   NX.feature({

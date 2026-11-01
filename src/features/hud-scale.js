@@ -11,7 +11,7 @@
   const SKEY = 'hudscale:k';
   const read = () => Math.round(NX.clamp(+NX.store.get(SKEY, 1) || 1, 1, 2) * 10) / 10;
   let k = read();
-  setInterval(() => { k = read(); }, 1000);
+  NX.every(1000, () => { k = read(); }, { key: KEY });
   let touch = false;
 
   // Escala efectiva, también para otros módulos que quieran acompañarla.

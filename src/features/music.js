@@ -236,14 +236,14 @@
       };
       loadMeta().then(refresh);
       refresh();
-      setInterval(() => {
+      NX.every(500, () => {
         try {
           // El juego pide la música del menú una sola vez al abrirlo; si eso
           // pasó antes de engancharnos, se deduce aquí.
           if (!want && ns.Game && ns.Game.state === 'ui' && NX.shown('scr-menu')) { want = 'village'; refresh(); }
           if (au && curId && !au.paused && fade >= 1) au.volume = targetVol();
         } catch (err) { NX.trip(KEY, err); }
-      }, 500);
+      }, { key: KEY });
     },
   });
 

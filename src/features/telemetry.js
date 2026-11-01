@@ -375,7 +375,7 @@
       const cur = NX.runs.current();
       if (cur && NX.isOn(KEY)) newRun(cur);
 
-      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, TICK_MS);
+      NX.every(TICK_MS, () => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY });
     },
   });
 

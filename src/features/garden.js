@@ -164,10 +164,10 @@
       NX.runs.on('end', (p, how) => { try { end(p, how); } catch (err) { NX.trip(KEY, err); } });
       P.tab({ key: KEY, title: 'Jardín', order: 2, render });
       // Refresca la pantalla del jardín mientras está abierta (barras de crecimiento).
-      setInterval(() => {
+      NX.every(15000, () => {
         const box = document.querySelector('#nexus-prog:not(.hidden) .nx-gd-plots');
         if (box && NX.store.get('prog:tab', '') === KEY) P.refresh();
-      }, 15000);
+      }, { when: 'menu', key: KEY });
       // Pruebas y depuración desde la consola: advance(ms) adelanta el reloj de las parcelas.
       NX.garden = {
         state: load, seeds: giveSeeds, plant, harvest, harvestAll,

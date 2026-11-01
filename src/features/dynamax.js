@@ -138,7 +138,7 @@
         },
         run: activate,
       });
-      setInterval(() => { if (run && run.active && !NX.isOn(KEY)) revert(true); }, 500);
+      NX.every(500, () => { if (run && run.active && !NX.isOn(KEY)) revert(true); }, { when: 'run', key: KEY });
     },
   });
 

@@ -145,7 +145,7 @@
 
   NX.feature({
     key: KEY,
-    label: 'Compañero',
+    label: 'Acompañante',
     needs: (n) => !!NX.pm && NX.featureList().some((f) => f.key === 'pokemech' && f.status === 'ok') && n.Sprites && typeof n.Sprites.Animator === 'function' &&
       typeof n.Sprites.dirFromAngle === 'function' && n.DB && n.DEX_BY,
     setup(n) {
@@ -174,20 +174,20 @@
           if (!box) { box = document.createElement('div'); box.className = 'row nx-comp-pick'; box.style.cssText = 'gap:6px;margin:6px 0;justify-content:center'; det.appendChild(box); }
           box.dataset.sig = sig;
           box.innerHTML = cur === dex
-            ? '<button type="button" class="btn small gold" disabled>Es tu compañero</button><button type="button" class="btn small ghost" data-x>Quitar (al azar)</button>'
-            : '<button type="button" class="btn small" data-use>Usar como compañero</button>';
+            ? '<button type="button" class="btn small ghost" data-x title="El acompañante sale al azar entre los tuyos">Te acompaña · Quitar</button>'
+            : '<button type="button" class="btn small" data-use title="Te sigue en la partida y ataca solo">Usar de acompañante</button>';
           const use = box.querySelector('[data-use]'), x = box.querySelector('[data-x]');
-          if (use) use.addEventListener('click', () => { NX.store.set(S_DEX, dex); NX.toast('Compañero elegido para la próxima partida'); paint(); });
-          if (x) x.addEventListener('click', () => { NX.store.set(S_DEX, 0); NX.toast('Compañero al azar entre los tuyos'); paint(); });
+          if (use) use.addEventListener('click', () => { NX.store.set(S_DEX, dex); NX.toast('Acompañante elegido para la próxima partida'); paint(); });
+          if (x) x.addEventListener('click', () => { NX.store.set(S_DEX, 0); NX.toast('Acompañante al azar entre los tuyos'); paint(); });
         };
         new MutationObserver(() => { try { paint(); } catch (err) { NX.trip(KEY, err); } }).observe(det, { childList: true });
       });
       // Apagado a mitad de partida: desaparece; encendido: aparece.
-      setInterval(() => {
+      NX.every(1000, () => {
         const p = NX.runs.current();
         if (!NX.isOn(KEY)) comp = null;
         else if (p && !comp && pm.allowed() && !p.__pkmCompTried) { p.__pkmCompTried = true; spawn(p); }
-      }, 1000);
+      }, { when: 'run', key: KEY });
     },
   });
 
@@ -197,15 +197,15 @@
   NX.settings.section({
     key: KEY,
     tab: 'Partida',
-    title: 'Compañero',
-    keywords: 'compañero companero segundo pokemon seguidor aliado',
+    title: 'Acompañante',
+    keywords: 'acompañante compañero companero segundo pokemon seguidor aliado',
     render(el) {
       el.appendChild(NX.ui.toggle('Activado', 'on:' + KEY, true));
       const list = ns ? owned() : [];
       const name = (d) => (NX.gd ? NX.gd.monName(d) : (ns && ns.DEX_BY[d] && ns.DEX_BY[d].name) || '#' + d);
-      el.appendChild(NX.ui.select('Pokémon compañero', S_DEX, [['0', 'Al azar entre los míos'], ...list.map((d) => [String(d), `#${d} ${name(d)}`])], '0'));
-      el.appendChild(NX.ui.range('Fuerza del compañero', S_POW, 0.25, 3, 0.25, 1, (v) => 'x' + v.toFixed(2)));
-      el.appendChild(NX.ui.note('Te sigue y dispara solo un movimiento básico de su tipo (' + Object.values(BASIC).slice(0, 4).join(', ') + '...) al enemigo más cercano. No tiene vida ni recibe daño. Si eliges el mismo Pokémon con el que juegas, sale otro al azar. El cambio se aplica en la próxima partida.'));
+      el.appendChild(NX.ui.select('Pokémon acompañante', S_DEX, [['0', 'Al azar entre los míos'], ...list.map((d) => [String(d), `#${d} ${name(d)}`])], '0'));
+      el.appendChild(NX.ui.range('Fuerza del acompañante', S_POW, 0.25, 3, 0.25, 1, (v) => 'x' + v.toFixed(2)));
+      el.appendChild(NX.ui.note('Te sigue y dispara solo un movimiento básico de su tipo (' + Object.values(BASIC).slice(0, 4).join(', ') + '...) al enemigo más cercano. No tiene vida ni recibe daño. Si eliges el mismo Pokémon con el que juegas, sale otro al azar. También se elige desde la ficha de la Pokédex. El cambio se aplica en la próxima partida.'));
     },
   });
 })();

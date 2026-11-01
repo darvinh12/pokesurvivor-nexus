@@ -74,7 +74,7 @@
         document.body.appendChild(el);
         for (const ev of ['pointerdown', 'mousedown', 'touchstart', 'click']) el.addEventListener(ev, (e) => e.stopPropagation());
         drag = NX.draggable(el, 'meter', () => ({ x: 12, y: 150 }));
-        setInterval(() => { try { render(); } catch (err) { NX.trip(KEY, err); } }, 200);
+        NX.every(200, () => { try { render(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY, leave: true });
       });
 
       // Tab mantenido: se traga la tecla para que el navegador no mueva el foco.

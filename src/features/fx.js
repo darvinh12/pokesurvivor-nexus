@@ -19,7 +19,7 @@
     plain = set.me.a === 1 && set.me.s === 1 && set.mate.a === 1 && set.mate.s === 1;
   };
   readOpts();
-  setInterval(readOpts, 1000);
+  NX.every(1000, readOpts, { key: KEY, name: 'opciones' });
 
   const ALPHA = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'globalAlpha');
   // Toda opacidad que el juego ponga mientras dibuja un grupo se multiplica por a.

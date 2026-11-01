@@ -290,10 +290,10 @@
       });
       document.addEventListener('visibilitychange', onHidden);
       addEventListener('pagehide', () => { if (NX.inRun()) liveSnap(); });
-      setInterval(() => { if (NX.inRun()) { try { liveSnap(); } catch (err) { NX.trip(KEY, err); } } }, 5000);
-      setInterval(() => { try { ensureButtons(); } catch (err) { NX.trip(KEY, err); } }, 500);
-      setInterval(() => { try { apTick(); } catch (err) { NX.trip(KEY, err); } }, 100);
-      setInterval(() => { try { breakTick(); } catch (err) { NX.trip(KEY, err); } }, 1000);
+      NX.every(5000, () => { if (NX.inRun()) { try { liveSnap(); } catch (err) { NX.trip(KEY, err); } } }, { when: 'run', key: KEY, name: 'guardado en vivo' });
+      NX.every(500, () => { try { ensureButtons(); } catch (err) { NX.trip(KEY, err); } }, { when: 'menu', key: KEY, name: 'botones' });
+      NX.every(100, () => { try { apTick(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY, name: 'carta automática', leave: true });
+      NX.every(1000, () => { try { breakTick(); } catch (err) { NX.trip(KEY, err); } }, { key: KEY, name: 'descanso' });
       // Cancelar la carta automática: cualquier tecla o toque.
       addEventListener('keydown', () => { if (ap) { ap.keepCancel = true; apCancel(); } }, true);
       addEventListener('pointerdown', () => { if (ap) { ap.keepCancel = true; apCancel(); } }, true);

@@ -191,11 +191,11 @@
       pm.onTick(KEY, tick);
       pm.drawables(KEY, drawables);
       // Apagado a mitad de partida: se cancela la guarida y el legendario huye.
-      setInterval(() => {
+      NX.every(1000, () => {
         if (!run || NX.isOn(KEY)) return;
         run.den = null;
         if (run.raid) flee(run.raid);
-      }, 1000);
+      }, { when: 'run', key: KEY });
     },
   });
 

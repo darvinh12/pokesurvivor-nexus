@@ -246,7 +246,7 @@
 
   // Ventanas de Nexus en la parte alta (minimapa), relativas al lienzo, a 4 Hz.
   let obstacles = [];
-  setInterval(() => {
+  NX.every(250, () => {
     if (!canvasEl || !NX.inRun()) return;
     const cr = canvasEl.getBoundingClientRect(), list = [];
     for (const id of ['nexus-map']) {
@@ -256,7 +256,7 @@
       if (r.width > 0 && r.height > 0 && r.top - cr.top < cr.height * 0.5) list.push({ left: r.left - cr.left, width: r.width, bottom: r.bottom - cr.top });
     }
     obstacles = list;
-  }, 250);
+  }, { when: 'run', key: KEY, name: 'obstáculos' });
 
   // Clic de mouse sobre los botones (el toque lo maneja Touch.addButton).
   addEventListener('pointerdown', (e) => {

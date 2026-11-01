@@ -227,7 +227,7 @@
     restoreFab();
     addEventListener('resize', () => { if (NX.store.get(POS, null)) restoreFab(); if (isMenuOpen()) placeMenu(); });
 
-    setInterval(() => {
+    NX.every(250, () => {
       try {
         const g = game(), st = g && g.state;
         const show = NX.isOn(KEY) && touchMode() && NX.inRun() && (st === 'playing' || pausedByUs) && !busy();
@@ -237,7 +237,7 @@
         if (pausedByUs && !isMenuOpen() && !holding()) resume();
         if (pausedByUs && !NX.inRun()) pausedByUs = false;
       } catch (err) { NX.trip(KEY, err); }
-    }, 250);
+    }, { when: 'run', key: KEY, leave: true });
   }
 
   NX.feature({

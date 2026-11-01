@@ -73,6 +73,13 @@
 #nexus-hold .card.nx-pg-dis:hover{transform:none}
 #nexus-hold .nx-hd-row{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:12px}
 #nexus-hold .nx-hd-coins{display:inline-flex;align-items:center;gap:6px;color:var(--gold,#ffd23f);font-weight:700}
+@media (max-height:520px){
+#nexus-prog .box{padding:8px 12px}
+#nexus-prog .nx-pg-tabs{flex:none;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 0 4px;padding-bottom:2px}
+#nexus-prog .nx-pg-tabs::-webkit-scrollbar{display:none}
+#nexus-prog .nx-pg-tabs>*{flex:none}
+#nexus-prog .nx-pg-foot{position:sticky;bottom:-8px;z-index:2;margin:8px -12px -8px;padding:8px 12px;background:linear-gradient(rgba(26,49,112,.75),var(--box2,#1a3170) 40%)}}
+@media (pointer:coarse){#nexus-prog .nx-pg-tabs .chip,#nexus-prog .btn,#nexus-prog select{min-height:44px}#nexus-prog input[type=checkbox]{width:24px;height:24px}#nexus-prog .nx-row{min-height:44px}}
 #nexus-prog-pill{position:fixed;left:50%;top:84px;transform:translateX(-50%);z-index:9990;pointer-events:none;padding:2px 10px;border-radius:12px;
   background:rgba(12,20,44,.8);color:#fff;border:2px solid #c0607a;font:12px/1.3 var(--font,'Pixelify',system-ui,sans-serif);white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
 #nexus-prog-pill.hidden{display:none}
@@ -190,7 +197,7 @@
   }
   // Vigila: si la partida terminó, cierra sin reanudar; si alguien la
   // reanudó por fuera, vuelve a pausarla; la pausa del juego queda oculta.
-  setInterval(() => {
+  NX.every(200, () => {
     const ns = NX.ns;
     if (!ns || !ns.Game) return;
     if (holdCur) {
@@ -199,7 +206,7 @@
       if (G.state === 'playing') pauseGame();
       else if (G.state === 'paused') { try { if (ns.UI.isOpen('scr-pause')) ns.UI.hide('scr-pause'); } catch (_) { /* nada */ } }
     } else pump();
-  }, 200);
+  }, { key: 'prog', name: 'ventana retenida' });
   NX.keys.bind(() => !!holdCur, (e) => {
     if (e.altKey && e.code === 'KeyN') return false;
     const fn = holdCur && holdCur.opts.key;
@@ -261,7 +268,7 @@
     pillEl.id = 'nexus-prog-pill';
     pillEl.className = 'hidden';
     document.body.appendChild(pillEl);
-    setInterval(pillTick, 250);
+    NX.every(250, pillTick, { when: 'run', key: 'prog', name: 'píldora', leave: true });
 
     // Botón del menú principal, debajo de Modos Nexus (o de Jugar).
     const place = () => {
@@ -281,10 +288,10 @@
       }
       if (after.nextElementSibling !== b) after.after(b);
     };
-    setInterval(() => {
+    NX.every(500, () => {
       place();
       if (hub && !hub.classList.contains('hidden') && !P.inMenu()) P.close();
-    }, 500);
+    }, { when: 'menu', key: 'prog', name: 'botón del menú', leave: true });
   });
 })();
 

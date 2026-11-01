@@ -151,7 +151,7 @@
 
     sel.addEventListener('change', () => { sig = ''; update(); });
     new MutationObserver(update).observe(list, { childList: true });
-    setInterval(() => { if (NX.shown('scr-upgrades')) update(); }, 700);
+    NX.every(700, () => { if (NX.shown('scr-upgrades')) update(); }, { when: 'menu', key: KEY });
     update();
   }
 

@@ -94,11 +94,11 @@
       corner.addEventListener('pointermove', move);
       corner.addEventListener('pointerup', up);
     });
-    requestAnimationFrame(loop);
+    // Solo en partida; al salir se oculta.
+    NX.every('frame', loop, { when: 'run', key: KEY, leave: () => el.classList.add('hidden') });
   }
 
   function loop(now) {
-    requestAnimationFrame(loop);
     const visible = NX.isOn(KEY) && NX.store.get('mapShown', true) && NX.inRun() && !NX.shown('scr-settings');
     el.classList.toggle('hidden', !visible);
     if (!visible || now - lastDraw < 60) return;

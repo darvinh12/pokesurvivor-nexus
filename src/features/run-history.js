@@ -4,6 +4,19 @@
 // pantalla de fin explica qué te derrotó. Los datos vienen de NX.telemetry,
 // que se evalúa después de este archivo: se accede a él de forma perezosa.
 // Ventana inspirada en la de PokeSurvivor Plus (MIT).
+// Carga diferida (src/core/lazy.js): en la edición, lo que sigue a
+// //#nexus-lazy va en un archivo aparte que se carga al primer uso; esta
+// declaración deja mientras tanto su estado, su sección del panel y sus atajos.
+NX.lazy.declare('builds', {
+  feats: [['hist', 'Historial y ranking'], ['hist:autopsy', 'Autopsia']],
+  sections: [
+    { key: 'hist', tab: 'Datos', title: 'Historial y ranking personal', keywords: 'partidas tier list ranking alt+r' },
+    { key: 'hist:autopsy', tab: 'Datos', title: 'Autopsia', keywords: 'muerte derrota golpe final' },
+  ],
+  keys: [{ feat: 'hist', test: (e) => e.altKey && e.code === 'KeyR' && !e.ctrlKey && !e.metaKey }],
+  screens: ['scr-over'],
+});
+//#nexus-lazy
 (() => {
   const KEY = 'hist';
   const AKEY = 'hist:autopsy';
@@ -113,7 +126,7 @@
   box-shadow:inset 0 0 0 2px #5b83d6,0 6px 0 #0a1430;font:13px/1.35 var(--font,'Pixelify',system-ui,sans-serif)}
 #nexus-hist h2{margin:0 0 6px;font-size:19px;color:#ffd23f;display:flex;justify-content:space-between;align-items:center;gap:8px}
 #nexus-hist h4{margin:10px 0 4px;font-size:13px;color:#9fd0ff}
-#nexus-hist button{font:inherit;font-size:12px;background:#0b1838;color:#fff;border:2px solid #5b83d6;border-radius:6px;cursor:pointer;padding:2px 10px}
+#nexus-hist button{font:inherit;font-size:13px;background:#0b1838;color:#fff;border:2px solid #5b83d6;border-radius:6px;cursor:pointer;padding:2px 10px}
 #nexus-hist button.on,#nexus-hist button:hover{border-color:#ffd23f}
 #nexus-hist .nx-tabs{display:flex;gap:6px;margin-bottom:8px}
 #nexus-hist .nx-cols{display:grid;grid-template-columns:230px 1fr;gap:12px}
@@ -126,14 +139,15 @@
 #nexus-hist .nx-tiles div{background:rgba(0,0,0,.25);border-radius:7px;padding:4px 8px}
 #nexus-hist .nx-tiles small{display:block;color:#b9cbf0;font-size:11px}
 #nexus-hist .nx-tiles b{font-size:15px}
-#nexus-hist .nx-mv{display:grid;grid-template-columns:1fr auto;gap:2px 8px;font-size:12px}
+#nexus-hist .nx-mv{display:grid;grid-template-columns:1fr auto;gap:2px 8px;font-size:13px}
 #nexus-hist .nx-leg{font-size:11px;color:#b9cbf0;margin-top:2px}
 #nexus-hist .nx-leg i{display:inline-block;width:10px;height:3px;margin:0 4px 2px 8px;vertical-align:middle}
 #nexus-hist table{width:100%;border-collapse:collapse;font-size:12.5px}
 #nexus-hist th{text-align:left;color:#9fd0ff;font-weight:600;padding:3px 6px}
 #nexus-hist td{padding:3px 6px;border-top:1px solid rgba(255,255,255,.08)}
 #nexus-hist .nx-tier{display:inline-block;min-width:22px;text-align:center;border-radius:5px;font-weight:700;color:#0b1838}
-#nexus-hist .nx-note{font-size:12px;opacity:.8;margin:4px 0}
+#nexus-hist .nx-note{font-size:13px;color:#c3d4f5;margin:4px 0}
+@media (pointer:coarse){#nexus-hist button{min-height:40px;padding:4px 12px}}
 #nexus-hist .nx-foot{display:flex;gap:6px;justify-content:flex-end;margin-top:10px}`);
   const TIER_COL = { S: '#ff7b7b', A: '#ffb36b', B: '#ffe66b', C: '#9be37b', D: '#7fc8ff' };
 

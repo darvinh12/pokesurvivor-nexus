@@ -316,7 +316,7 @@
         fill: () => run && run.charge.fill(),
       });
       // Si el módulo se apaga a mitad de partida, la forma se deshace.
-      setInterval(() => { if (run && run.active && !NX.isOn(KEY)) revert(true); }, 500);
+      NX.every(500, () => { if (run && run.active && !NX.isOn(KEY)) revert(true); }, { when: 'run', key: KEY });
     },
   });
 

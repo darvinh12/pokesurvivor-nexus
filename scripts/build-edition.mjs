@@ -9,7 +9,11 @@
 // propio antes de app.min.js y se engancha a los módulos internos igual que
 // en el laboratorio. Cambios sobre la copia del juego:
 //  - js/nexus.js (el mod) y js/nexus-data.js (tiers de SurvivorTiers) en cada
-//    página que carga el juego.
+//    página que carga el juego. Los módulos que solo se usan en el menú van
+//    aparte, en js/nexus-<parte>.js, y se cargan al primer uso (src/core/lazy.js).
+//    Todo va minificado con esbuild (npm ci).
+//  - nexus-version.json con el identificador del contenido, para el aviso de
+//    versión nueva.
 //  - CSP limitada al propio sitio: la edición no usa el Firebase del autor, así
 //    que no toca sus cuentas, su ranking ni su co-op. El guardado es local.
 //  - Sin el detector de extensiones (en esta edición Nexus es parte del juego).
@@ -19,6 +23,7 @@ import { cpSync, existsSync, readFileSync, writeFileSync, readdirSync, rmSync, s
 import { join, resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { bundle, sizeOf } from './build.mjs';
 
 // Service worker de la edición (ver buildOffline). __V__ y __PRE__ se
 // reemplazan al generar.
@@ -95,7 +100,7 @@ self.addEventListener('fetch', (e) => {
     if (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/')) e.respondWith(cacheFirst(req, EXT, true));
     return;
   }
-  if (url.pathname.endsWith('/sw.js') || url.pathname.startsWith('/__/') || req.headers.has('range')) return;
+  if (url.pathname.endsWith('/sw.js') || url.pathname.endsWith('/nexus-version.json') || url.pathname.startsWith('/__/') || req.headers.has('range')) return;
   if (url.pathname.includes('/assets/pokemon/')) {
     // Los disfraces (k-*) pueden cambiar: red primero, como hacía el juego.
     e.respondWith(/\\/k-[a-z0-9-]+\\//.test(url.pathname) ? netFirst(req, false) : cacheFirst(req, ART, false));
@@ -196,7 +201,13 @@ writeFileSync(manFile, JSON.stringify({
 // 2. Nexus y sus datos.
 const modCode = readFileSync(mod, 'utf8');
 const version = (/^\/\*! PokeSurvivor Nexus v([\d.]+) \*\//.exec(modCode) || [])[1] || '0.0.0';
-writeFileSync(join(out, 'js', 'nexus.js'), modCode);
+// Bundle principal sin el código de los módulos diferidos, más una parte por
+// grupo (js/nexus-<parte>.js). El sw.js las precachea con el resto de js/.
+const split = await bundle({ version, split: true, min: !process.argv.includes('--no-min') });
+writeFileSync(join(out, 'js', 'nexus.js'), split.main);
+for (const [file, code] of Object.entries(split.parts)) writeFileSync(join(out, 'js', file), code);
+const mainSize = sizeOf(split.main), partSize = Object.values(split.parts).map(sizeOf).reduce((a, b) => ({ bytes: a.bytes + b.bytes, gzip: a.gzip + b.gzip }), { bytes: 0, gzip: 0 });
+console.log(`[edition] Nexus: carga inicial ${(mainSize.bytes / 1024).toFixed(0)} KB (${(mainSize.gzip / 1024).toFixed(0)} KB con gzip) · diferido ${Object.keys(split.parts).length} partes, ${(partSize.bytes / 1024).toFixed(0)} KB (${(partSize.gzip / 1024).toFixed(0)} KB con gzip)`);
 // El juego reescribe el título al arrancar; se le agrega el nombre de la edición.
 const TITLE_KEEPER = `(() => {
   const t = document.querySelector('title');
@@ -205,7 +216,9 @@ const TITLE_KEEPER = `(() => {
   new MutationObserver(fix).observe(t, { childList: true });
   fix();
 })();`;
-writeFileSync(join(out, 'js', 'nexus-data.js'), 'window.__nexusData=' + JSON.stringify(await loadData()) + ';\n' + TITLE_KEEPER + '\n');
+const nexusData = await loadData();
+const writeData = (extra) => writeFileSync(join(out, 'js', 'nexus-data.js'), 'window.__nexusData=' + JSON.stringify({ ...nexusData, ...extra }) + ';\n' + TITLE_KEEPER + '\n');
+writeData({});
 
 // 3. Páginas que arrancan el juego.
 // Sin Firebase propio, la CSP solo deja el propio sitio. Con Firebase propio se
@@ -279,9 +292,9 @@ Required Notice: Copyright 2026 JPTER78 (https://github.com/JPTER78/pokesurvivor
 
 El juego original es obra de JPTER78 y se distribuye bajo PolyForm Noncommercial 1.0.0 (ver LICENSE y LICENSE-NONCOMMERCIAL.md). Los sprites mantienen sus licencias originales (ver CREDITS.md). Pokémon y sus nombres pertenecen a sus dueños.
 
-Nexus (js/nexus.js) es MIT: https://github.com/darvinh12/pokesurvivor-nexus. Los tiers de js/nexus-data.js vienen de SurvivorTiers (https://survivortiers.pages.dev/), de @fildotai.
+Nexus (js/nexus.js y js/nexus-*.js) es MIT: https://github.com/darvinh12/pokesurvivor-nexus. Los tiers de js/nexus-data.js vienen de SurvivorTiers (https://survivortiers.pages.dev/), de @fildotai.
 
-Cambios respecto al original: se agregan js/nexus.js y js/nexus-data.js, las páginas del juego los cargan, la edición no usa el Firebase del autor (${fb ? 'usa un proyecto de Firebase propio' : 'guardado local, sin ranking ni co-op en línea'}), se omite el detector de extensiones, se ajustan título, aviso e indexación, la app instalable tiene nombre e íconos propios y un service worker propio (sw.js) permite jugar sin conexión.
+Cambios respecto al original: se agregan js/nexus.js, js/nexus-*.js, js/nexus-data.js y nexus-version.json, las páginas del juego los cargan, la edición no usa el Firebase del autor (${fb ? 'usa un proyecto de Firebase propio' : 'guardado local, sin ranking ni co-op en línea'}), se omite el detector de extensiones, se ajustan título, aviso e indexación, la app instalable tiene nombre e íconos propios y un service worker propio (sw.js) permite jugar sin conexión.
 
 Generada desde ${upstream} con Nexus v${version}.
 `);
@@ -312,6 +325,14 @@ function buildOffline(dir) {
     .filter((f) => existsSync(join(dir, f)))
     .concat(...['css', 'js', 'icons', 'nexus', 'assets/icons', 'assets/fonts', 'assets/banner'].map((s) => all(s).map(rel)))
     .filter((f) => !/\.(md|txt|map)$/i.test(f));
+  // Identificador del contenido para el aviso de versión nueva: todo lo
+  // precacheado menos js/nexus-data.js, que lo lleva dentro (se cuentan sus
+  // datos). Sin cambios, el identificador y sw.js quedan iguales.
+  const idHash = createHash('sha256').update(JSON.stringify(nexusData));
+  for (const f of pre.slice().sort()) if (f !== 'js/nexus-data.js') idHash.update(f + '\0').update(readFileSync(join(dir, f)));
+  const build = idHash.digest('hex').slice(0, 12);
+  writeData({ build });
+  writeFileSync(join(dir, 'nexus-version.json'), JSON.stringify({ build, nexus: version }) + '\n');
   const hash = createHash('sha256');
   let bytes = 0;
   for (const f of pre.sort()) {

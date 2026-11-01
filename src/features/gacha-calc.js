@@ -16,6 +16,15 @@
 // El cálculo es exacto por programación dinámica sobre (piedad, épica ya
 // vista en la tanda). Los nuevos esperados suman la probabilidad de cada
 // faltante (linealidad de la esperanza).
+// Carga diferida (src/core/lazy.js): en la edición, lo que sigue a
+// //#nexus-lazy va en un archivo aparte que se carga al primer uso; esta
+// declaración deja mientras tanto su estado, su sección del panel y sus atajos.
+NX.lazy.declare('gacha', {
+  feats: [['gcalc', 'Calculadora de gacha']],
+  sections: [{ key: 'gcalc', tab: 'Menús', title: 'Calculadora de gacha', keywords: 'gacha probabilidad tiradas piedad legendaria calculadora tickets faltan esperado' }],
+  screens: ['scr-gacha'],
+});
+//#nexus-lazy
 (() => {
   const KEY = 'gcalc';
   const MAX_PULLS = 3000;
@@ -181,11 +190,12 @@
 .nx-gcalc input[type=number]{width:110px}
 .nx-gcalc .gc-big{font-size:18px;color:var(--gold,#ffd23f);font-weight:700}
 .nx-gcalc .gc-r{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:6px 0}
-.nx-gcalc .gc-r div{background:rgba(0,0,0,.25);border-radius:6px;padding:4px 6px;text-align:center;font-size:12px}
+.nx-gcalc .gc-r div{background:rgba(0,0,0,.25);border-radius:6px;padding:4px 6px;text-align:center;font-size:13px}
 .nx-gcalc .gc-r b{display:block;font-size:15px;color:#fff}
-.nx-gcalc .gc-n{font-size:12px;opacity:.85;margin:3px 0}
+.nx-gcalc .gc-n{font-size:13px;color:var(--muted,#b9cbf0);margin:3px 0}
 .nx-gcalc .gc-btns{display:flex;gap:6px;flex-wrap:wrap}
-.nx-gcalc .gc-btns button{font:inherit;font-size:12px;color:inherit;background:none;border:1px solid currentColor;border-radius:4px;padding:1px 7px;cursor:pointer}
+.nx-gcalc .gc-btns button{font:inherit;font-size:13px;color:inherit;background:none;border:1px solid currentColor;border-radius:4px;padding:2px 9px;cursor:pointer}
+@media (pointer:coarse){.nx-gcalc .gc-btns button{min-height:40px;padding:4px 12px}}
 @media (pointer:coarse){.nx-gcalc select,.nx-gcalc input{min-height:36px;font-size:15px}.nx-gcalc .gc-btns button{min-height:34px}}`);
 
   // Monta la calculadora en "box". getGen() devuelve el banner (o null para

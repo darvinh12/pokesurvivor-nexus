@@ -30,7 +30,7 @@
     opt.xpNum = opt.colors && !!NX.store.get('hudcolors:xpnum', false);
   };
   readOpts();
-  setInterval(readOpts, 1000);
+  NX.every(1000, readOpts, { key: 'hudcolors', name: 'opciones' });
 
   const BOSS_COL = { game: '#ffcb3d', red: '#ff3048', purple: '#b06bff', cyan: '#4fd1ff' };
   const XP_COL = { green: ['#7dffb0', '#2fbf6a'], gold: ['#fff1a6', '#f0a020'], white: ['#ffffff', '#b9cbf0'] };
@@ -167,14 +167,9 @@
       clock.className = 'nx-hudcard hidden';
       clock.innerHTML = '<div class="nx-ck-t"></div><div class="nx-ck-s"></div><div class="nx-ck-xp"><i></i></div>';
       document.body.appendChild(clock);
-      let last = 0;
-      const loop = (now) => {
-        requestAnimationFrame(loop);
-        if (now - last < 100) return;
-        last = now;
+      NX.every(100, () => {
         try { update(ns); } catch (err) { NX.trip(opt.plate ? 'bossplate' : 'clockpanel', err); }
-      };
-      requestAnimationFrame(loop);
+      }, { when: 'run', key: 'bossplate', name: 'placa y reloj', leave: true });
     });
   }
 

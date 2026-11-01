@@ -160,9 +160,9 @@ html.nx-hudth #nexus-panel input[type=checkbox]{accent-color:var(--nx-h-acc)}
       refresh();
       NX.onReady(refresh);
       // hud-new.js registra su capa al arrancar; se envuelve cuando aparezca.
-      const t = setInterval(() => { if (wrapLayer()) clearInterval(t); }, 300);
-      setTimeout(() => clearInterval(t), 90000);
-      setInterval(() => { try { refresh(); } catch (err) { NX.trip(KEY, err); } }, 1000);
+      const t = NX.every(300, () => { if (wrapLayer()) t.stop(); }, { key: KEY, name: 'enganche' });
+      setTimeout(() => t.stop(), 90000);
+      NX.every(1000, () => { try { refresh(); } catch (err) { NX.trip(KEY, err); } }, { key: KEY });
     },
   });
 

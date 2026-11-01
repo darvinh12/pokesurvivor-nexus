@@ -3,6 +3,15 @@
 // según los datos del propio juego (probabilidades del gacha, garantía de
 // legendaria, Amuleto Iris, banner de evento y descripción de cada logro).
 // Solo lee el guardado; no cambia nada.
+// Carga diferida (src/core/lazy.js): en la edición, lo que sigue a
+// //#nexus-lazy va en un archivo aparte que se carga al primer uso; esta
+// declaración deja mientras tanto su estado, su sección del panel y sus atajos.
+NX.lazy.declare('dex', {
+  feats: [['coll', 'Checklist de colección']],
+  sections: [{ key: 'coll', tab: 'Menús', title: 'Checklist de colección', keywords: 'colección faltan pokémon shiny logros región progreso checklist' }],
+  screens: ['scr-dex', 'scr-goals'],
+});
+//#nexus-lazy
 (() => {
   const KEY = 'coll';
   const ns = () => NX.ns;

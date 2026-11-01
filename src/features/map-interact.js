@@ -348,7 +348,7 @@
 
       NX.runs.on('start', () => { berries.length = 0; clearBridges(); });
       NX.runs.on('end', () => { berries.length = 0; });
-      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 100);
+      NX.every(100, () => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY, leave: true });
     },
   });
 

@@ -141,7 +141,7 @@
         } catch (err) { NX.trip(KEY, err); }
       }, { passive: true });
       addEventListener('blur', hide);
-      setInterval(() => { if (lastKey && (!NX.inRun() || ns.Game.state !== 'playing')) hide(); }, 300);
+      NX.every(300, () => { if (lastKey && (!NX.inRun() || ns.Game.state !== 'playing')) hide(); }, { when: 'run', key: KEY, leave: true });
 
       // Números en las cartas de subida de nivel.
       G.lvl.on(KEY, (el, o, pl, on) => {

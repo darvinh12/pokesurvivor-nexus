@@ -38,12 +38,12 @@
       });
       NX.css('#scr-bond .card{position:relative}#scr-bond .nx-kbd{position:absolute;right:6px;top:4px;font-size:11px;opacity:.7;padding:0 5px;border:1px solid currentColor;border-radius:4px}');
       // Etiqueta 1, 2, 3... en las cartas de vínculo para que el atajo se descubra solo.
-      setInterval(() => {
+      NX.every(200, () => {
         if (!NX.isOn(KEY) || !NX.shown('scr-bond')) return;
         visibleCards('bond-cards').forEach((c, i) => {
           if (i < 9 && !c.querySelector('.nx-kbd')) c.insertAdjacentHTML('beforeend', `<span class="nx-kbd">${i + 1}</span>`);
         });
-      }, 200);
+      }, { key: KEY });
     },
   });
 

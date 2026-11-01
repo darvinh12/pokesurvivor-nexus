@@ -34,7 +34,7 @@
     opt.cdNum = NX.store.get('hudnew:cdnum', true) !== false;
   };
   readOpts();
-  setInterval(readOpts, 1000);
+  NX.every(1000, readOpts, { key: KEY, name: 'opciones' });
 
   // Colores de "Colores del HUD" (boss-plate.js), si está cargado.
   const pal = () => NX.hudPalette || null;
@@ -289,7 +289,7 @@
 
   // Obstáculos del DOM (minimapa y medidor de daño) en píxeles CSS, a 4 Hz.
   let obstacles = [], canvasRect = null, hudCanvas = null;
-  setInterval(() => {
+  NX.every(250, () => {
     if (!opt.on || !NX.inRun()) return;
     const list = [];
     for (const id of ['nexus-map', 'nexus-meter']) {
@@ -300,7 +300,7 @@
     }
     obstacles = list;
     canvasRect = hudCanvas ? hudCanvas.getBoundingClientRect() : null;
-  }, 250);
+  }, { when: 'run', key: KEY, name: 'obstáculos' });
 
   // Puntero (para la descripción de los orbes al pasar el mouse).
   const mouse = { x: -1, y: -1 };
@@ -783,7 +783,7 @@
         T.addButton = mine;
       };
       ensureOuter();
-      setInterval(ensureOuter, 1000);
+      NX.every(1000, ensureOuter, { key: KEY, name: 'toque' });
 
       NX.hudLayers.push({
         key: KEY,
@@ -806,7 +806,7 @@
         },
       });
       // Si el HUD nuevo deja de dibujarse (módulo apagado), que no quede marcado.
-      setInterval(() => { if (!NX.isOn(KEY)) NX.hudNewActive = false; }, 500);
+      NX.every(500, () => { if (!NX.isOn(KEY)) NX.hudNewActive = false; }, { key: KEY, name: 'estado' });
     },
   });
 

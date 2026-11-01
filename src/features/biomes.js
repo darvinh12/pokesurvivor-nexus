@@ -257,7 +257,7 @@
       ensure();
       hook();
       NX.runs.on('end', () => { run = null; bagCache.key = ''; bagCache.bag = null; });
-      setInterval(() => { try { watch(); } catch (err) { NX.trip(KEY, err); } }, 500);
+      NX.every(500, () => { try { watch(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY, leave: true });
     },
   });
 

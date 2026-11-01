@@ -158,7 +158,7 @@
         document.body.appendChild(box);
       });
       NX.runs.on('start', () => { recent.clear(); lastRift = null; });
-      setInterval(() => {
+      NX.every(250, () => {
         if (!NX.inRun() || !NX.isOn(KEY)) return;
         try { scan(ns); } catch (err) { NX.trip(KEY, err); }
         // Los avisos van debajo del reloj, del próximo jefe y de la placa del jefe.
@@ -170,7 +170,7 @@
           }
           box.style.top = Math.round(top) + 'px';
         }
-      }, 250);
+      }, { when: 'run', key: KEY });
     },
   });
 

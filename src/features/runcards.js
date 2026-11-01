@@ -262,7 +262,7 @@
       hook();
       NX.runs.on('start', (p) => { try { start(p); } catch (err) { NX.trip(KEY, err); } });
       NX.runs.on('end', (p) => { try { end(p); } catch (err) { NX.trip(KEY, err); } });
-      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 250);
+      NX.every(250, () => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY });
       P.pill(KEY, () => { const r = act(); return r ? 'Carta: ' + r.card.name + (r.card.id === 'lastbreath' ? (r.fx.lastBreath ? ' (lista)' : ' (usada)') : '') : ''; });
       P.tab({
         key: KEY, title: 'Cartas', order: 4,

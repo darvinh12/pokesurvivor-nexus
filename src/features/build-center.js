@@ -5,6 +5,20 @@
 // SurvivorTiers (si el cascarón trajo los datos) y tu mejor build según tu
 // historial de partidas. NX.buildModel, NX.gd, NX.telemetry, NX.personalRank
 // y NX.buildlab se leen de forma perezosa.
+// Carga diferida (src/core/lazy.js): en la edición, lo que sigue a
+// //#nexus-lazy va en un archivo aparte que se carga al primer uso; esta
+// declaración deja mientras tanto su estado, su sección del panel y sus atajos.
+NX.lazy.declare('builds', {
+  feats: [['build-center', 'Centro de builds']],
+  sections: [{ key: 'build-center', tab: 'Datos', title: 'Centro de builds', keywords: 'build builds mejor movimientos ranking tier modelo nexus survivortiers laboratorio' }],
+  screens: ['scr-dex'],
+  menu: {
+    id: 'nexus-bc-btn', feat: 'build-center', after: '#scr-menu [data-go="dex"]',
+    html: (ns) => `<span class="mi-ico" aria-hidden="true">${(ns && ns.Icons && ns.Icons.html('fist', 18)) || '★'}</span><span>Builds</span><small>La mejor build de cada Pokémon</small>`,
+    open: () => NX.buildCenter.open(),
+  },
+});
+//#nexus-lazy
 (() => {
   const KEY = 'build-center';
   const ns = () => NX.ns;
@@ -87,7 +101,24 @@ html.nx-bc-open #nexus-fab{visibility:hidden}
 #nexus-bc .nx-bc-hd{grid-template-columns:auto 1fr}
 #nexus-bc .nx-bc-sc{grid-column:1 / -1;flex-direction:row;justify-content:flex-start;gap:8px}
 #nexus-bc .nx-bc-bar{grid-template-columns:96px 1fr 36px}
-#nexus-bc .nx-bc-fil select{flex:1 1 30%}}`);
+#nexus-bc .nx-bc-fil select{flex:1 1 30%}}
+@media (max-height:520px){
+#nexus-bc .nx-bc-box{gap:6px;padding:8px 10px}
+#nexus-bc .nx-bc-left{display:grid;grid-template-columns:minmax(150px,1fr) minmax(0,1.7fr);grid-template-rows:auto auto minmax(0,1fr);grid-template-areas:"q f" "o n" "l l";gap:6px 8px}
+#nexus-bc .nx-bc-left>.nx-bc-q{grid-area:q}
+#nexus-bc .nx-bc-left>.nx-bc-fil{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;min-width:0}
+#nexus-bc .nx-bc-left>.nx-bc-fil::-webkit-scrollbar{display:none}
+#nexus-bc .nx-bc-left>.nx-bc-fil>*{flex:none}
+#nexus-bc .nx-bc-left>.nx-bc-fil:nth-child(2){grid-area:f}
+#nexus-bc .nx-bc-left>.nx-bc-fil:nth-child(3){grid-area:o}
+#nexus-bc .nx-bc-left>.nx-bc-n{grid-area:n;align-self:center;text-align:right}
+#nexus-bc .nx-bc-left>.nx-bc-list{grid-area:l;min-height:0}
+#nexus-bc .nx-bc-fil select{flex:none;max-width:170px}
+#nexus-bc .nx-bc-foot{display:none}}
+@media (pointer:coarse){#nexus-bc .btn,#nexus-bc .chip,#nexus-bc select,#nexus-bc .field{min-height:44px}}
+#nexus-bc .nx-bc-cnt{font-size:13px}
+#nexus-bc .nx-bc-row .stb{font-size:12px}
+#nexus-bc .nx-bc-foot{font-size:12px}`);
 
   // ---- datos
   const owns = (dex) => {

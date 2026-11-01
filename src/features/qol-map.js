@@ -140,7 +140,7 @@
       n.Pickups && n.EnemyMgr && n.Spawner && n.Camera && n.Camera.left,
     setup() {
       NX.hudLayers.push({ key: KEY, over: drawNear });
-      setInterval(() => { try { waveTick(); } catch (err) { NX.trip(KEY, err); } }, 250);
+      NX.every(250, () => { try { waveTick(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY, leave: true });
       NX.runs.on('start', () => { wave = null; far = []; farAt = 0; near = null; });
     },
   });

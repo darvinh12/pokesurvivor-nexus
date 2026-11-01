@@ -249,9 +249,9 @@ html.nx-th #nexus-fab{background:var(--box2);outline-color:var(--edge-out)}
         applyAll();
         splash();
         // El menú puede rehacerse y otra pestaña puede cambiar el estilo.
-        setInterval(() => {
+        NX.every(1000, () => {
           try { applyAll(); maybeWelcome(); } catch (err) { NX.trip(KEY, err); }
-        }, 1000);
+        }, { key: KEY });
       });
     },
   });

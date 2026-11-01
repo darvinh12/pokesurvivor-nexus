@@ -56,11 +56,7 @@
         pill.id = 'nexus-boss';
         pill.className = 'hidden';
         document.body.appendChild(pill);
-        let last = 0;
-        const loop = (now) => {
-          requestAnimationFrame(loop);
-          if (now - last < 100) return;
-          last = now;
+        const loop = () => {
           try {
             const on = NX.isOn(KEY), p = NX.me(), st = ns.Game.state;
             const live = on && p && PLAYING.has(st) && !p.dead;
@@ -87,7 +83,7 @@
             }
           } catch (err) { NX.trip(KEY, err); }
         };
-        requestAnimationFrame(loop);
+        NX.every(100, loop, { when: 'run', key: KEY, leave: true });
       });
     },
   });

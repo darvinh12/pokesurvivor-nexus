@@ -12,7 +12,14 @@
   NX._realDpr = readDpr();
 
   const perf = () => NX.isOn(KEY) && NX.store.get('res', 'game') === 'perf';
-  const fpsCap = () => (NX.isOn(KEY) ? +NX.store.get('fps', 0) || 0 : 0);
+  // Con una ventana tapando el fondo del menú, el mundo de fondo se dibuja a
+  // menos cuadros (perf:menufps, lo ajustan los perfiles de rendimiento).
+  const fpsCap = () => {
+    if (!NX.isOn(KEY)) return 0;
+    const cap = +NX.store.get('fps', 0) || 0;
+    const m = NX.menuCovered && NX.menuCovered() ? +NX.store.get('perf:menufps', 30) || 0 : 0;
+    return m && (!cap || m < cap) ? m : cap;
+  };
 
   NX.feature({
     key: KEY,

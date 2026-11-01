@@ -321,7 +321,8 @@
     const origLiquid = W.drawLiquid;
     W.drawLiquid = function (ctx, cam, t) {
       const r = origLiquid.apply(this, arguments);
-      L.frameQ = L.level();
+      // Sin animaciones extra mientras una ventana tapa el fondo del menú.
+      L.frameQ = NX.menuCovered && NX.menuCovered() ? 0 : L.level();
       if (L.frameQ && L.liquids) {
         ctx.save();
         try { L.liquids(ctx, cam, t, L.frameQ); } catch (err) { NX.trip(KEY, err); }
@@ -372,7 +373,7 @@
       L.ns = n;
       hook();
       watch();
-      setInterval(() => { try { watch(); } catch (err) { NX.trip(KEY, err); } }, 500);
+      NX.every(500, () => { try { watch(); } catch (err) { NX.trip(KEY, err); } }, { key: KEY });
     },
   });
 

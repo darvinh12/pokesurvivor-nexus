@@ -28,7 +28,7 @@
     opt.on = NX.isOn(KEY);
   };
   readOpts();
-  setInterval(readOpts, 1000);
+  NX.every(1000, readOpts, { key: KEY, name: 'opciones' });
   const replacing = (t) => opt.on && opt.replace && opt[t];
 
   // ---- ocultar las flechas del juego que reemplazamos

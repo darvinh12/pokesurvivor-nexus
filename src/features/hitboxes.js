@@ -14,7 +14,7 @@
     opt.lift = NX.store.get('hitbox:lift', true) !== false;
   };
   readOpts();
-  setInterval(readOpts, 1000);
+  NX.every(1000, readOpts, { key: KEY, name: 'opciones' });
 
   // Un solo trazo por grupo para no pagar un dibujo por enemigo.
   function group(ctx, list, fill, stroke, lw) {

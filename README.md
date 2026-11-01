@@ -65,6 +65,11 @@ Los ajustes se abren con **Alt + N** o con el botón "Nexus" del menú principal
 | Estilo | Temas del HUD | |
 | General | Reasignar teclas, sin videos ni novedades del oficial, compañero desde la ficha de la Pokédex | |
 | Datos | Modo sin conexión en el teléfono | |
+| Datos | Tier list con filas S a D (Nexus, SurvivorTiers y su ranking) | botón en el menú |
+| Datos | Sincronización de Nexus entre PC y teléfono con su Firebase | |
+| Partida | Ajustes rápidos en la pausa | |
+| General | Versión a la vista, favoritos del panel y restablecer | |
+| Rendimiento | Reloj común, monitor de rendimiento por módulo y perfiles Teléfono, PC y Mínimo | |
 | Rendimiento | Resolución, pixel art nítido, límite de FPS y efectos reducidos | |
 
 ## Cómo se actualiza
@@ -74,7 +79,8 @@ La extensión es un cascarón que se instala una sola vez. Al abrir Chrome y cad
 Para publicar una versión:
 
 ```bash
-node scripts/build.mjs --release 0.3.0
+npm ci
+node scripts/build.mjs --release 0.7.0
 git add -A && git commit -m "Versión 0.3.0" && git push
 ```
 

@@ -61,10 +61,10 @@ html.nx-cb-page{filter:url(#nexus-cb)}`);
     setup() {
       NX.onReady(apply);
       // Por si el ajuste cambia desde otra pestaña o desde otro módulo.
-      setInterval(() => {
+      NX.every(1000, () => {
         const now = [NX.isOn(KEY) && !!SIM[NX.store.get('cb:mode', 'off')], NX.store.get('cb:mode', 'off'), NX.store.get('cb:k', 1), NX.store.get('cb:scope', 'game')].join('|');
         if (now !== sig) apply();
-      }, 1000);
+      }, { key: KEY });
     },
   });
 

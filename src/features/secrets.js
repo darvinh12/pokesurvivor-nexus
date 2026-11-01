@@ -179,7 +179,7 @@
       hook();
       NX.runs.on('start', (p) => { try { start(p); } catch (err) { NX.trip(KEY, err); } });
       NX.runs.on('end', (p) => { try { end(p); } catch (err) { NX.trip(KEY, err); } });
-      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 500);
+      NX.every(500, () => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY });
       P.on('harvest', (total) => {
         if (!NX.isOn(KEY)) return;
         const d = BY.snorlax, s = load();

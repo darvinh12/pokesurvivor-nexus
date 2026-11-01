@@ -53,7 +53,15 @@
 #nexus-mode-pill b{color:#d9c8ff}#nexus-mode-pill.hidden{display:none}
 #nexus-mode-pause{justify-content:center;margin-top:10px}#nexus-mode-pause[hidden]{display:none}
 #nexus-mode-pause .nx-md-tag{width:100%;text-align:center;color:#d9c8ff;font-size:13px}
-#over-stats .nx-md-over{grid-column:1/-1;text-align:center;color:#d9c8ff;font-size:13px}`);
+#over-stats .nx-md-over{grid-column:1/-1;text-align:center;color:#d9c8ff;font-size:13px}
+#nexus-modes .nx-md-card b.nx-md-nil{font-size:14px;font-weight:400;color:var(--muted,#b9cbf0)}
+@media (max-height:520px){
+#nexus-modes .box{padding:8px 12px}
+#nexus-modes .nx-md-tabs{flex:none;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 0 4px;padding-bottom:2px}
+#nexus-modes .nx-md-tabs::-webkit-scrollbar{display:none}
+#nexus-modes .nx-md-tabs>*{flex:none}
+#nexus-modes .nx-md-foot{position:sticky;bottom:-8px;z-index:2;margin:8px -12px -8px;padding:8px 12px;background:linear-gradient(rgba(26,49,112,.75),var(--box2,#1a3170) 40%)}}
+@media (pointer:coarse){#nexus-modes .nx-md-tabs .chip,#nexus-modes .btn,#nexus-modes select{min-height:44px}#nexus-modes input[type=checkbox]{width:24px;height:24px}#nexus-modes .nx-row{min-height:44px}}`);
 
   // ---------------------------------------------------------------- guardado
   function snapStats(c) {
@@ -461,7 +469,10 @@
     cards(el, items) {
       const g = document.createElement('div');
       g.className = 'nx-md-grid';
-      g.innerHTML = items.map(([k, v]) => `<div class="nx-md-card"><span>${NX.esc(k)}</span><b>${NX.esc(v)}</b></div>`).join('');
+      // Sin ningún récord, una línea en vez de tarjetas vacías.
+      const nil = (v) => v == null || /^[·-]?$/.test(String(v).trim()) || String(v).trim() === '0';
+      if (items.every(([, v]) => nil(v))) { const p = NX.ui.note('Sin récords todavía.'); el.appendChild(p); return p; }
+      g.innerHTML = items.map(([k, v]) => `<div class="nx-md-card"><span>${NX.esc(k)}</span>${nil(v) && String(v).trim() !== '0' ? '<b class="nx-md-nil">Sin récord</b>' : `<b>${NX.esc(v)}</b>`}</div>`).join('');
       el.appendChild(g);
       return g;
     },
@@ -549,13 +560,13 @@
       ns = n;
       hook();
       NX.runs.on('end', (p) => { if (ctx && p === ctx.player) finish(ns.Game.state); });
-      setInterval(() => { try { tick(); pillUpdate(); } catch (err) { NX.trip(KEY, err); } }, 100);
+      NX.every(100, () => { try { tick(); pillUpdate(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY, leave: true });
 
       // Copia de estadísticas de una partida infinita que no terminó (pestaña cerrada).
-      const rec = setInterval(() => {
+      const rec = NX.every(1000, () => {
         const s = ns.DB && ns.DB.save;
         if (!s || !s.stats) return;
-        clearInterval(rec);
+        rec.stop();
         const snap = NX.store.get(SNAP_KEY, null);
         if (!snap || ctx) return;
         if ((s.stats.runs || 0) === snap.runs && Date.now() - snap.at < 7 * 864e5) {
@@ -563,7 +574,7 @@
           try { ns.DB.commit(true); } catch (_) { /* sin conexión */ }
         }
         NX.store.set(SNAP_KEY, null);
-      }, 1000);
+      }, { key: KEY, name: 'recuperar estadísticas' });
 
       NX.onReady(() => {
         pill = document.createElement('div');
@@ -598,11 +609,11 @@
           } else if (play.nextElementSibling !== b) play.after(b);
         };
         place();
-        setInterval(() => {
+        NX.every(500, () => {
           place();
           if (modal && !modal.classList.contains('hidden') && !(ns.Game.state === 'ui')) closeModal();
           syncPause();
-        }, 500);
+        }, { key: KEY, name: 'menú y pausa' });
 
         const pauseBox = document.querySelector('#scr-pause .box');
         const btnRow = pauseBox && pauseBox.querySelector(':scope > .row');

@@ -205,7 +205,7 @@
       n.EnemyMgr && typeof n.EnemyMgr.all === 'function' && n.Camera && typeof n.Camera.left === 'function' && n.Game && n.Game.st,
     setup(n) {
       ns = n;
-      setInterval(() => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, 100);
+      NX.every(100, () => { try { tick(); } catch (err) { NX.trip(KEY, err); } }, { when: 'run', key: KEY, leave: true });
       NX.runs.on('end', () => { reset(); runP = null; });
     },
   });

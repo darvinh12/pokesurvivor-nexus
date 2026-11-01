@@ -1,0 +1,13 @@
+{
+  "name": "pokesurvivor-nexus",
+  "private": true,
+  "description": "Laboratorio de mejoras para PokéSurvivor. Solo se usa para compilar el mod.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "edition": "node scripts/build-edition.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

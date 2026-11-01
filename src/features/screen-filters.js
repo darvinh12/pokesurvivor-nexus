@@ -106,10 +106,10 @@ html.nx-sf-crt #nexus-crt{display:block}
     early: true,
     setup() {
       NX.onReady(apply);
-      setInterval(() => {
+      NX.every(1000, () => {
         const now = [NX.isOn(KEY) ? mode() : 'off', k(), NX.isOn(KEY) && crtOn(), crtK()].join('|');
         if (now !== sig) apply();
-      }, 1000);
+      }, { key: KEY });
     },
   });
 
