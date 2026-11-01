@@ -42,10 +42,55 @@ if (fb) for (const k of ['apiKey', 'authDomain', 'projectId', 'storageBucket', '
 }
 const hosts = (cfg.hosts || []).filter((h) => /^[a-z0-9.-]+$/i.test(h));
 
-// 1. Copia limpia del juego (se conserva el .git de la salida).
+// Datos de la generación anterior: si SurvivorTiers no cambió se conserva su
+// fecha (así una regeneración sin cambios no produce commit) y si no responde
+// se reutilizan los tiers anteriores en vez de perderlos.
+let prevData = null;
+try {
+  const m = /^window\.__nexusData=(.*?);\n/s.exec(readFileSync(join(out, 'js', 'nexus-data.js'), 'utf8'));
+  if (m) prevData = JSON.parse(m[1]);
+} catch (_) { prevData = null; }
+
+// 1. Copia limpia del juego. Se conservan el .git y el .github de la salida
+// (el workflow de actualización vive en el repositorio de la edición).
 const SKIP = new Set(['.git', '.github', 'CNAME']);
-if (existsSync(out)) for (const f of readdirSync(out)) if (f !== '.git') rmSync(join(out, f), { recursive: true, force: true });
+const KEEP = new Set(['.git', '.github']);
+if (existsSync(out)) for (const f of readdirSync(out)) if (!KEEP.has(f)) rmSync(join(out, f), { recursive: true, force: true });
 cpSync(src, out, { recursive: true, filter: (p) => !SKIP.has(relative(src, p).split(/[\\/]/)[0]) });
+
+// 1b. Archivos propios de la edición (íconos, recursos de estilo...): todo
+// edition-assets/ se copia tal cual a la raíz de la salida.
+const assets = join(root, 'edition-assets');
+if (existsSync(assets)) cpSync(assets, out, { recursive: true });
+
+// 1c. App instalable propia: manifiesto con nombre, id e íconos de la edición,
+// para que no se confunda con la app del juego original.
+const THEME = '#0b1838';
+for (const f of ['nexus-180.png', 'nexus-192.png', 'nexus-512.png', 'nexus-maskable-512.png']) {
+  if (!existsSync(join(out, 'icons', f))) fail('falta edition-assets/icons/' + f);
+}
+const manFile = join(out, 'manifest.webmanifest');
+const man = existsSync(manFile) ? JSON.parse(readFileSync(manFile, 'utf8')) : {};
+writeFileSync(manFile, JSON.stringify({
+  ...man,
+  id: 'nexus-edition',
+  name: 'PokéSurvivor Nexus Edition',
+  short_name: 'Nexus',
+  description: 'Edición no oficial y sin fines comerciales de PokéSurvivor, de JPTER78, con PokeSurvivor Nexus integrado.',
+  lang: 'es',
+  start_url: './?app=nexus',
+  scope: './',
+  display: man.display || 'fullscreen',
+  orientation: man.orientation || 'landscape',
+  background_color: '#0a1430',
+  theme_color: THEME,
+  icons: [
+    { src: 'icons/nexus-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: 'icons/nexus-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: 'icons/nexus-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+    { src: 'icons/nexus-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+  ].filter((i) => existsSync(join(out, i.src))),
+}, null, 2) + '\n');
 
 // 2. Nexus y sus datos.
 const modCode = readFileSync(mod, 'utf8');
@@ -70,6 +115,12 @@ const BADGE = '<div id="nx-edition" style="position:fixed;right:8px;bottom:6px;z
 let pages = 0;
 for (const file of walk(out).filter((f) => f.endsWith('.html'))) {
   let s = readFileSync(file, 'utf8');
+  // Íconos y color propios en todas las páginas (pestaña, inicio de iOS y barra del sistema).
+  const branded = s
+    .replace(/(<link rel="(?:apple-touch-icon|icon)"[^>]*href=")([^"]*?)assets\/icons\/icon-(48|96|144|180)\.png"/g, '$1$2icons/nexus-$3.png"')
+    .replace(/<meta name="theme-color" content="[^"]*">/g, `<meta name="theme-color" content="${THEME}">`)
+    .replace(/<meta name="apple-mobile-web-app-title" content="[^"]*">/g, '<meta name="apple-mobile-web-app-title" content="Nexus">');
+  if (branded !== s) { s = branded; writeFileSync(file, s); }
   const app = /<script defer src="([^"]*?)js\/app\.min\.js(\?[^"]*)?"><\/script>/;
   const m = app.exec(s);
   if (!m) continue;
@@ -94,12 +145,15 @@ let appOut = app.replace(boot, '');
 // 4b. Firebase propio y dominios donde el juego activa la nube.
 if (fb) {
   const q = (v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
-  const conf = /'apiKey':'[^']*','authDomain':'[^']*','projectId':'[^']*','storageBucket':'[^']*','messagingSenderId':[^,]+,'appId':'[^']*','databaseURL':'[^']*'/;
+  // Cada valor puede venir literal ('...'), como número o, desde b742e43, como
+  // llamada ofuscada al diccionario de cadenas (_0x1234(0x9a5)).
+  const V = String.raw`(?:'[^']*'|_0x[0-9a-f]+\(0x[0-9a-f]+\)|0x[0-9a-f]+|\d+)`;
+  const conf = new RegExp(['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId', 'databaseURL'].map((k) => `'${k}':${V}`).join(','));
   if (!conf.test(appOut)) fail('no se encontró la configuración de Firebase del juego; el juego cambió su estructura');
   appOut = appOut.replace(conf, `'apiKey':${q(fb.apiKey)},'authDomain':${q(fb.authDomain)},'projectId':${q(fb.projectId)},'storageBucket':${q(fb.storageBucket)},'messagingSenderId':${q(fb.messagingSenderId)},'appId':${q(fb.appId)},'databaseURL':${q(fb.databaseURL)}`);
 }
 if (hosts.length) {
-  const list = /\['pokesurvivor\.com','www\.pokesurvivor\.com',[^\]]*\]/;
+  const list = /\[(?:'pokesurvivor\.com'|_0x[0-9a-f]+\(0x[0-9a-f]+\)),'www\.pokesurvivor\.com',[^\]]*\]/;
   if (!list.test(appOut)) console.warn('[edition] no se encontró la lista de dominios oficiales; la nube puede no activarse en ' + hosts.join(', '));
   appOut = appOut.replace(list, (m) => m.slice(0, -1) + hosts.map((h) => `,'${h}'`).join('') + ']');
 }
@@ -117,7 +171,7 @@ El juego original es obra de JPTER78 y se distribuye bajo PolyForm Noncommercial
 
 Nexus (js/nexus.js) es MIT: https://github.com/darvinh12/pokesurvivor-nexus. Los tiers de js/nexus-data.js vienen de SurvivorTiers (https://survivortiers.pages.dev/), de @fildotai.
 
-Cambios respecto al original: se agregan js/nexus.js y js/nexus-data.js, las páginas del juego los cargan, la edición no usa el Firebase del autor (${fb ? 'usa un proyecto de Firebase propio' : 'guardado local, sin ranking ni co-op en línea'}), se omite el detector de extensiones y se ajustan título, aviso e indexación.
+Cambios respecto al original: se agregan js/nexus.js y js/nexus-data.js, las páginas del juego los cargan, la edición no usa el Firebase del autor (${fb ? 'usa un proyecto de Firebase propio' : 'guardado local, sin ranking ni co-op en línea'}), se omite el detector de extensiones, se ajustan título, aviso e indexación, y la app instalable tiene nombre e íconos propios.
 
 Generada desde ${upstream} con Nexus v${version}.
 `);
@@ -133,16 +187,18 @@ ${FENCE}bash
 npx serve .
 ${FENCE}
 
-Los ajustes de Nexus se abren con Alt + N o con el botón "Nexus" del menú. El README original del juego está en README.original.md.
+Los ajustes de Nexus se abren con Alt + N o con el botón "Nexus" del menú. En pantallas táctiles, durante la partida, el botón "N" de la esquina superior abre un menú con las acciones que en el teclado van por atajos. El README original del juego está en README.original.md.
 
-Esta carpeta se genera con node scripts/build-edition.mjs desde https://github.com/darvinh12/pokesurvivor-nexus, así que no conviene editarla a mano.
+La edición se puede instalar como app propia ("PokéSurvivor Nexus Edition") desde el menú del navegador.
+
+Esta carpeta se genera con node scripts/build-edition.mjs desde https://github.com/darvinh12/pokesurvivor-nexus, así que no conviene editarla a mano. El workflow .github/workflows/sync.yml la regenera cada día con la última versión del juego y de Nexus, y solo publica si algo cambió. Necesita el secreto EDITION_CONFIG con el contenido de edition.config.json.
 `);
 console.log(`Edición lista en ${out} · Nexus v${version} · ${pages} páginas · juego ${upstream}`);
 
 function walk(dir) {
   const acc = [];
   for (const f of readdirSync(dir)) {
-    if (f === '.git' || f === 'assets') continue;
+    if (f === '.git' || f === '.github' || f === 'assets') continue;
     const p = join(dir, f);
     if (statSync(p).isDirectory()) acc.push(...walk(p)); else acc.push(p);
   }
@@ -182,6 +238,11 @@ async function loadData() {
     if (rows.length > 100) data.tiers = { fetchedAt: Date.now(), patch, rows };
   } catch (err) {
     console.warn('[edition] sin tiers de SurvivorTiers: ' + err.message);
+  }
+  const old = prevData && prevData.tiers;
+  if (old && Array.isArray(old.rows)) {
+    if (!data.tiers) { data.tiers = old; console.warn('[edition] se conservan los tiers de la generación anterior'); }
+    else if (old.patch === data.tiers.patch && JSON.stringify(old.rows) === JSON.stringify(data.tiers.rows)) data.tiers.fetchedAt = old.fetchedAt;
   }
   return data;
 }

@@ -75,7 +75,25 @@ NX.css(`#nexus-panel{position:fixed;inset:0;z-index:100000;display:flex;align-it
 #nexus-panel .nx-tabs button.on{background:#ffd23f;color:#0b1838;border-color:#ffd23f}
 #nexus-panel .nx-btn{font:inherit;font-size:13px;background:#0b1838;color:#fff;border:2px solid #f4f8ff;border-radius:6px;cursor:pointer;padding:3px 10px;margin:4px 6px 4px 0}
 #nexus-fab{position:fixed;left:12px;bottom:12px;z-index:9999;padding:6px 12px;border-radius:8px;cursor:pointer;
-  background:#152a5c;color:#ffd23f;border:2px solid #f4f8ff;outline:2px solid #0b1838;font:13px var(--font,'Pixelify',system-ui,sans-serif)}`);
+  background:#152a5c;color:#ffd23f;border:2px solid #f4f8ff;outline:2px solid #0b1838;font:13px var(--font,'Pixelify',system-ui,sans-serif)}
+#nexus-panel .nx-box{overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+@media (pointer:coarse),(max-width:700px),(max-height:500px){
+#nexus-panel{align-items:flex-start;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+#nexus-panel .nx-box{width:min(620px,calc(100vw - 16px));max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);margin:8px auto;padding:0 12px 12px;font-size:15px}
+#nexus-panel h2{position:sticky;top:0;z-index:2;margin:0 -12px 4px;padding:8px 12px;background:#1d3470;border-bottom:2px solid #5b83d6}
+#nexus-panel .nx-close{min-height:40px;min-width:76px;font-size:15px}
+#nexus-panel .nx-row{min-height:44px;padding:2px 0}
+#nexus-panel .nx-row>span:first-child{flex:1;min-width:0}
+#nexus-panel input[type=checkbox]{width:26px;height:26px;flex:none}
+#nexus-panel input[type=range]{width:min(42vw,200px);min-height:28px}
+#nexus-panel select{min-height:40px;max-width:52vw;font-size:15px}
+#nexus-panel .nx-search{min-height:42px;font-size:16px}
+#nexus-panel .nx-tabs{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin;touch-action:pan-x}
+#nexus-panel .nx-tabs button{flex:none;min-height:40px;padding:4px 14px;font-size:14px;border-radius:20px}
+#nexus-panel .nx-btn{min-height:40px;padding:6px 14px;font-size:14px}
+#nexus-panel h3 .nx-close,#nexus-panel .nx-box button{min-height:40px}
+#nexus-panel .nx-note{font-size:13px}
+#nexus-fab{min-height:40px;padding:8px 16px;font-size:15px;left:calc(12px + env(safe-area-inset-left,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px))}}`);
 
 let panel = null, fab = null;
 const STATUS_TXT = { ok: 'activo', pending: 'esperando', missing: 'falta', broken: 'roto' };

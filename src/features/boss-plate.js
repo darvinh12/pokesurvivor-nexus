@@ -40,6 +40,12 @@
     // Degradado según la vida: verde lleno, amarillo a la mitad, rojo al final.
     return `hsl(${Math.round(NX.clamp(frac, 0, 1) * 120)},78%,52%)`;
   };
+  // Para el HUD Nexus (hud-new.js): los mismos colores en sus barras.
+  NX.hudPalette = {
+    hp: (frac) => (opt.hp === 'game' ? '#ff5f6d' : hpColor(frac)),
+    xp: () => XP_COL[opt.xp] || null,
+    xpNum: () => opt.xpNum,
+  };
 
   // ---- ventana del cuerpo del HUD del juego
   let hooked = false, depth = 0, body = false, bossFind = false, plateShown = false, clockShown = false;
@@ -265,7 +271,8 @@
       NX.hudLayers.push({
         key: 'hudcolors',
         over(ctx, w, h, pl) {
-          if (!opt.xpNum || clockShown || !pl || !(pl.xpNext > 0)) return;
+          // Con el HUD Nexus la experiencia va abajo y él mismo pone el número.
+          if (!opt.xpNum || clockShown || NX.hudNewActive || !pl || !(pl.xpNext > 0)) return;
           const t = `Nv. ${pl.level} · ${Math.floor(NX.clamp(pl.xp / pl.xpNext, 0, 1) * 100)} %`;
           ctx.font = '700 10px Pixelify,"Segoe UI",sans-serif';
           ctx.textAlign = 'center';

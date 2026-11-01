@@ -46,6 +46,11 @@ Los ajustes se abren con **Alt + N** o con el botón "Nexus" del menú principal
 | Menús | Maximizar mejoras de un Pokémon con confirmación del costo | |
 | Menús | Checklist de Pokémon, shinies y logros que faltan | |
 | General | Respaldo de ajustes y datos de Nexus | |
+| General | Botón táctil en partida con las acciones de Nexus | |
+| HUD | HUD Nexus al estilo Plus: barra de vida grande, retrato, ataques, orbes y tarjetas del equipo | |
+| Modos | Modos Nexus: infinito, modificadores, laboratorio de builds, desafío diario y Boss Rush | botón en el menú |
+| Datos | Centro de builds: build calculada con los datos del juego, la de SurvivorTiers y la suya | botón en el menú |
+| Estilo | Identidad Nexus Edition, filtros de pantalla y música propia (la del juego viene apagada) | |
 | Rendimiento | Resolución, pixel art nítido, límite de FPS y efectos reducidos | |
 
 ## Cómo se actualiza

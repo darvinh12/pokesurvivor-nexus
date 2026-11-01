@@ -80,6 +80,10 @@
               pill.textContent = (th.judge ? 'Juicio en ' : 'Jefe en ') + fmt(th.in);
               pill.classList.toggle('judge', th.judge);
               pill.classList.toggle('soon', th.in <= 20);
+              // Justo debajo del panel de reloj cuando está a la vista (crece con la escala del HUD).
+              const clk = document.getElementById('nexus-clock');
+              const top = clk && clk.offsetParent !== null ? Math.round(clk.getBoundingClientRect().bottom + 4) + 'px' : '';
+              if (pill.style.top !== top) pill.style.top = top;
             }
           } catch (err) { NX.trip(KEY, err); }
         };

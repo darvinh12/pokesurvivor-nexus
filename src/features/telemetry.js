@@ -82,7 +82,8 @@
   // Área de ataque que acaba de estallar.
   function hazardSrc(p) {
     const H = NX.ns.Hazards;
-    const arr = H && H.all && H.all();
+    // Según la versión del juego, Hazards.all es una función o la lista misma.
+    const arr = H && (typeof H.all === 'function' ? H.all() : Array.isArray(H.all) ? H.all : null);
     if (!arr || !arr.length) return null;
     let best = null, bd = Infinity;
     for (let i = 0; i < arr.length; i++) {

@@ -161,6 +161,15 @@
       setInterval(() => {
         if (!NX.inRun() || !NX.isOn(KEY)) return;
         try { scan(ns); } catch (err) { NX.trip(KEY, err); }
+        // Los avisos van debajo del reloj, del próximo jefe y de la placa del jefe.
+        if (box && box.childElementCount) {
+          let top = 84;
+          for (const id of ['nexus-clock', 'nexus-boss', 'nexus-bossplate']) {
+            const e = document.getElementById(id);
+            if (e && e.offsetParent !== null && !e.classList.contains('hidden')) top = Math.max(top, e.getBoundingClientRect().bottom + 8);
+          }
+          box.style.top = Math.round(top) + 'px';
+        }
       }, 250);
     },
   });
